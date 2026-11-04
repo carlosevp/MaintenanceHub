@@ -1,0 +1,43 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --mh-ink: #223345;
+  --mh-surface: #f4f7fb;
+  --mh-accent: #0f766e;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 500px at 10% -10%, rgba(15, 118, 110, 0.12), transparent 55%),
+    radial-gradient(900px 400px at 100% 0%, rgba(180, 83, 9, 0.08), transparent 50%),
+    linear-gradient(180deg, #eef3f8 0%, #f7f9fc 40%, #f4f7fb 100%);
+}
+
+@layer components {
+  .mh-shell {
+    @apply mx-auto max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  .mh-panel {
+    @apply rounded-xl border border-ink-200/80 bg-white/90 shadow-panel backdrop-blur;
+  }
+
+  .mh-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md bg-accent px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50;
+  }
+
+  .mh-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-ink-200 bg-white px-3.5 py-2 text-sm font-medium text-ink-800 transition hover:bg-ink-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
+  }
+
+  .mh-input {
+    @apply w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 shadow-sm placeholder:text-ink-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30;
+  }
+
+  .mh-label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-500;
+  }
+}

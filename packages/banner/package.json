@@ -1,0 +1,8 @@
+{
+  "name": "@maintenancehub/banner",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Stub — banner package lands in M12. Not production-ready.",
+  "main": "src/index.ts",
+  "type": "module"
+}

@@ -1,0 +1,54 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: development
+      AUTH_MODE: local_dev
+      DATABASE_URL: sqlite:////app/data/maintenancehub.db
+      JWT_SECRET: local-compose-secret
+      SEED_DEMO_DATA: "true"
+      API_CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost:8080
+    volumes:
+      - mh-data:/app/data
+
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      DATABASE_URL: sqlite:////app/data/maintenancehub.db
+      WORKER_POLL_SECONDS: "15"
+    volumes:
+      - mh-data:/app/data
+    depends_on:
+      - api
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - api
+
+  # Optional Postgres profile: docker compose --profile postgres up
+  postgres:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: mh
+      POSTGRES_PASSWORD: mh
+      POSTGRES_DB: maintenancehub
+    ports:
+      - "5432:5432"
+    volumes:
+      - mh-pg:/var/lib/postgresql/data
+
+volumes:
+  mh-data:
+  mh-pg:

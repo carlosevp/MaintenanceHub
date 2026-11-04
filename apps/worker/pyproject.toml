@@ -1,0 +1,16 @@
+[project]
+name = "maintenancehub-worker"
+version = "0.1.0"
+description = "MaintenanceHub job worker (stub until M5)"
+requires-python = ">=3.11"
+dependencies = [
+  "maintenancehub-api",
+  "sqlalchemy>=2.0.36",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

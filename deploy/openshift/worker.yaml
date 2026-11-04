@@ -1,0 +1,24 @@
+# Minimal placeholder — flesh out in M13 / M5
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintenancehub-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maintenancehub-worker
+  template:
+    metadata:
+      labels:
+        app: maintenancehub-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+      containers:
+        - name: worker
+          image: maintenancehub-worker:latest
+          envFrom:
+            - secretRef:
+                name: maintenancehub-secrets
