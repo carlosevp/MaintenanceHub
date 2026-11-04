@@ -28,6 +28,19 @@ export type Environment = {
   sort_order: number;
 };
 
+export type RecurrenceInfo = {
+  rrule: string;
+  until_at?: string | null;
+  summary: string;
+  exceptions: Array<{
+    id: string;
+    original_starts_at: string;
+    action: string;
+    new_starts_at?: string | null;
+    new_ends_at?: string | null;
+  }>;
+};
+
 export type MaintenanceEvent = {
   id: string;
   kind: string;
@@ -46,6 +59,9 @@ export type MaintenanceEvent = {
     target_id: string;
     environment_id?: string | null;
   }>;
+  recurrence?: RecurrenceInfo | null;
+  is_occurrence?: boolean;
+  occurrence_starts_at?: string | null;
 };
 
 export type DashboardSummary = {
@@ -66,6 +82,7 @@ export type CalendarEvent = {
   ends_at: string;
   timezone: string;
   is_occurrence: boolean;
+  occurrence_starts_at?: string | null;
 };
 
 export type TimelineEntry = {
@@ -161,5 +178,31 @@ export const api = {
     request<{ application_ids: string[] }>("/api/v1/me/favorites", {
       method: "PUT",
       body: JSON.stringify({ application_ids }),
+    }),
+  previewRecurrence: (body: unknown) =>
+    request<{ summary: string; occurrences: Array<{ starts_at: string; ends_at: string; original_starts_at: string }> }>(
+      "/api/v1/events/recurrence/preview",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  eventOccurrences: (id: string, from: string, to: string) =>
+    request<
+      Array<{
+        occurrence_id: string;
+        original_starts_at: string;
+        starts_at: string;
+        ends_at: string;
+        cancelled: boolean;
+        is_exception: boolean;
+      }>
+    >(`/api/v1/events/${id}/occurrences?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
+  cancelOccurrence: (id: string, original_starts_at: string) =>
+    request<MaintenanceEvent>(`/api/v1/events/${id}/cancel`, {
+      method: "POST",
+      body: JSON.stringify({ scope: "this", original_starts_at }),
+    }),
+  seriesEdit: (id: string, body: unknown) =>
+    request<MaintenanceEvent>(`/api/v1/events/${id}/series-edit`, {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 };

@@ -113,9 +113,13 @@ def events_for_token(db: Session, token: CalendarToken) -> list[MaintenanceEvent
         )
         matched_ids.update(r[0] for r in impact_event_ids)
 
+    from maintenancehub_api.models import RecurrenceRule
+
     return (
         db.query(MaintenanceEvent)
-        .options(joinedload(MaintenanceEvent.recurrence_rule))
+        .options(
+            joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions)
+        )
         .filter(
             MaintenanceEvent.id.in_(matched_ids),
             MaintenanceEvent.status != EventStatus.cancelled,

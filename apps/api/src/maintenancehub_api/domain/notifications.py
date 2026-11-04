@@ -28,6 +28,7 @@ from maintenancehub_api.models import (
     Subscription,
     SubscriptionTarget,
 )
+from maintenancehub_api.schemas.common import ensure_utc
 
 logger = logging.getLogger("maintenancehub.notifications")
 
@@ -256,31 +257,82 @@ def _enqueue_send_job(db: Session, *, delivery_id: str, idempotency_key: str) ->
 
 
 def schedule_reminders_for_event(db: Session, event: MaintenanceEvent) -> int:
-    """Enqueue reminder jobs at starts_at + offset for each matching subscription."""
+    """Enqueue reminder jobs per occurrence (bounded horizon) with stable idempotency keys.
+
+    Key includes original occurrence start so edits/reschedules update run_at without
+    duplicating deliveries. Cancelled occurrences are skipped.
+    """
     if event.approval_state != ApprovalState.confirmed_scheduled:
         return 0
+
+    from maintenancehub_api.domain import recurrence as recurrence_service
+    from maintenancehub_api.models import RecurrenceRule
+
+    # Ensure recurrence + exceptions loaded
+    if event.is_recurring and event.recurrence_rule is None:
+        event = (
+            db.query(MaintenanceEvent)
+            .options(
+                joinedload(MaintenanceEvent.impacts),
+                joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions),
+            )
+            .filter(MaintenanceEvent.id == event.id)
+            .first()
+        ) or event
+
+    now = _now()
+    horizon = now + timedelta(days=recurrence_service.REMINDER_HORIZON_DAYS)
+    occs = recurrence_service.expand_event_occurrences(
+        event, range_start=now - timedelta(hours=1), range_end=horizon
+    )
+    if not occs:
+        # Fall back to master start for one-shot already started edge
+        occs = recurrence_service.expand_event_occurrences(
+            event,
+            range_start=ensure_utc(event.starts_at) - timedelta(seconds=1),
+            range_end=ensure_utc(event.starts_at) + timedelta(days=1),
+        )
+
     count = 0
     for sub in matching_subscriptions(db, event):
         for rem in sub.reminders:
-            run_at = event.starts_at + timedelta(minutes=rem.offset_minutes)
-            key = f"reminder:event:{event.id}:sub:{sub.id}:offset:{rem.offset_minutes}"
-            existing = db.query(Job).filter(Job.idempotency_key == key).first()
-            if existing:
-                continue
-            db.add(
-                Job(
-                    job_type="notify_reminder",
-                    payload={
-                        "event_id": event.id,
-                        "subscription_id": sub.id,
-                        "offset_minutes": rem.offset_minutes,
-                    },
-                    idempotency_key=key,
-                    status=JobStatus.queued,
-                    run_at=run_at,
+            for occ in occs:
+                if occ.cancelled:
+                    continue
+                orig_key = occ.original_starts_at.strftime("%Y%m%dT%H%M%SZ")
+                key = (
+                    f"reminder:event:{event.id}:orig:{orig_key}"
+                    f":sub:{sub.id}:offset:{rem.offset_minutes}"
                 )
-            )
-            count += 1
+                run_at = occ.starts_at + timedelta(minutes=rem.offset_minutes)
+                existing = db.query(Job).filter(Job.idempotency_key == key).first()
+                if existing:
+                    # Reschedule queued reminder if occurrence moved
+                    if existing.status == JobStatus.queued and existing.run_at != run_at:
+                        existing.run_at = run_at
+                        existing.payload = {
+                            **(existing.payload or {}),
+                            "occurrence_starts_at": occ.starts_at.isoformat(),
+                            "original_starts_at": occ.original_starts_at.isoformat(),
+                        }
+                        count += 1
+                    continue
+                db.add(
+                    Job(
+                        job_type="notify_reminder",
+                        payload={
+                            "event_id": event.id,
+                            "subscription_id": sub.id,
+                            "offset_minutes": rem.offset_minutes,
+                            "occurrence_starts_at": occ.starts_at.isoformat(),
+                            "original_starts_at": occ.original_starts_at.isoformat(),
+                        },
+                        idempotency_key=key,
+                        status=JobStatus.queued,
+                        run_at=run_at,
+                    )
+                )
+                count += 1
     try:
         db.commit()
     except IntegrityError:
@@ -349,10 +401,38 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
     sub = db.get(Subscription, payload["subscription_id"])
     if not event or not sub or not sub.is_active:
         return {"skipped": True}
+
+    # Skip if this occurrence was cancelled after the job was queued
+    orig = payload.get("original_starts_at")
+    if orig and event.is_recurring:
+        from maintenancehub_api.domain import recurrence as recurrence_service
+        from maintenancehub_api.models import RecurrenceRule
+
+        event = (
+            db.query(MaintenanceEvent)
+            .options(
+                joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions)
+            )
+            .filter(MaintenanceEvent.id == event.id)
+            .first()
+        ) or event
+        orig_dt = ensure_utc(datetime.fromisoformat(str(orig).replace("Z", "+00:00")))
+        occs = recurrence_service.expand_event_occurrences(
+            event,
+            range_start=orig_dt - timedelta(minutes=1),
+            range_end=orig_dt + timedelta(minutes=1),
+            include_cancelled=True,
+        )
+        if any(o.cancelled for o in occs):
+            return {"skipped": True, "reason": "occurrence_cancelled"}
+
     offset = int(payload["offset_minutes"])
     label = f"{abs(offset)}m before start" if offset < 0 else f"{offset}m after start"
     subject_t, body_t = get_template(db, "event.reminder")
-    ctx = event_context(event, {"offset_label": label})
+    extra = {"offset_label": label}
+    if payload.get("occurrence_starts_at"):
+        extra["starts_at"] = payload["occurrence_starts_at"]
+    ctx = event_context(event, extra)
     subject = render_template(subject_t, ctx)
     body = render_template(body_t, ctx)
     if sub.destination_type == "teams_bridge_channel":
@@ -363,7 +443,8 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
     else:
         channel = "smtp"
         subj = subject
-    key = f"event:{event.id}:event.reminder:offset:{offset}:sub:{sub.id}"
+    orig_key = payload.get("original_starts_at") or "master"
+    key = f"event:{event.id}:event.reminder:orig:{orig_key}:offset:{offset}:sub:{sub.id}"
     row, is_new = create_delivery_idempotent(
         db,
         idempotency_key=key,

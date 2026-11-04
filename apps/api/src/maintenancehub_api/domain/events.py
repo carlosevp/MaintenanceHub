@@ -24,8 +24,10 @@ from maintenancehub_api.models import (
     ImpactTargetType,
     MaintenanceEvent,
     OutboxEvent,
+    RecurrenceRule,
     TimelineEntryType,
 )
+from maintenancehub_api.domain import recurrence as recurrence_service
 
 
 def _now() -> datetime:
@@ -105,6 +107,25 @@ def create_event(
             payload={"action": "created", "status": event.status.value, "approval_state": approval.value},
         )
     )
+
+    if data.get("recurrence"):
+        recurrence_service.upsert_rule(db, event, recurrence=data["recurrence"])
+        db.add(
+            EventTimelineEntry(
+                event_id=event.id,
+                at=_now(),
+                actor_id=actor_id,
+                entry_type=TimelineEntryType.system,
+                payload={
+                    "action": "recurrence_set",
+                    "rrule": event.recurrence_rule.rrule if event.recurrence_rule else None,
+                    "summary": recurrence_service.human_summary(
+                        data["recurrence"], timezone_name=event.timezone
+                    ),
+                },
+            )
+        )
+
     _enqueue_outbox(db, event=event, event_type="event.created")
     db.commit()
     return get_event(db, event.id)
@@ -113,7 +134,11 @@ def create_event(
 def get_event(db: Session, event_id: str) -> MaintenanceEvent | None:
     return (
         db.query(MaintenanceEvent)
-        .options(joinedload(MaintenanceEvent.impacts), joinedload(MaintenanceEvent.timeline))
+        .options(
+            joinedload(MaintenanceEvent.impacts),
+            joinedload(MaintenanceEvent.timeline),
+            joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions),
+        )
         .filter(MaintenanceEvent.id == event_id)
         .first()
     )
@@ -319,3 +344,205 @@ def add_timeline_note(
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def set_recurrence(
+    db: Session,
+    event: MaintenanceEvent,
+    *,
+    recurrence: dict[str, Any],
+    actor_id: str | None,
+) -> MaintenanceEvent:
+    recurrence_service.resolve_tz(event.timezone)
+    recurrence_service.upsert_rule(db, event, recurrence=recurrence)
+    db.add(
+        EventTimelineEntry(
+            event_id=event.id,
+            at=_now(),
+            actor_id=actor_id,
+            entry_type=TimelineEntryType.system,
+            payload={
+                "action": "recurrence_set",
+                "rrule": event.recurrence_rule.rrule if event.recurrence_rule else None,
+                "summary": recurrence_service.human_summary(
+                    recurrence, timezone_name=event.timezone
+                ),
+            },
+        )
+    )
+    _enqueue_outbox(db, event=event, event_type="event.rescheduled", payload={"action": "recurrence_set"})
+    db.commit()
+    return get_event(db, event.id)  # type: ignore[return-value]
+
+
+def exception_for_occurrence(
+    db: Session,
+    event: MaintenanceEvent,
+    *,
+    original_starts_at: datetime,
+    action: str,
+    new_starts_at: datetime | None = None,
+    new_ends_at: datetime | None = None,
+    actor_id: str | None,
+) -> MaintenanceEvent:
+    """Cancel or reschedule a single occurrence (does not rewrite the master series)."""
+    if not event.is_recurring or not event.recurrence_rule:
+        raise ValueError("Event is not recurring")
+    recurrence_service.add_or_replace_exception(
+        db,
+        event,
+        original_starts_at=original_starts_at,
+        action=action,
+        new_starts_at=new_starts_at,
+        new_ends_at=new_ends_at,
+    )
+    db.add(
+        EventTimelineEntry(
+            event_id=event.id,
+            at=_now(),
+            actor_id=actor_id,
+            entry_type=TimelineEntryType.system,
+            payload={
+                "action": f"occurrence_{action}",
+                "original_starts_at": ensure_utc(original_starts_at).isoformat(),
+                "new_starts_at": new_starts_at.isoformat() if new_starts_at else None,
+                "new_ends_at": new_ends_at.isoformat() if new_ends_at else None,
+            },
+        )
+    )
+    _enqueue_outbox(
+        db,
+        event=event,
+        event_type="event.rescheduled",
+        payload={
+            "action": f"occurrence_{action}",
+            "original_starts_at": ensure_utc(original_starts_at).isoformat(),
+        },
+    )
+    db.commit()
+    return get_event(db, event.id)  # type: ignore[return-value]
+
+
+def edit_series(
+    db: Session,
+    event: MaintenanceEvent,
+    *,
+    scope: str,
+    original_starts_at: datetime | None = None,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    expected_impact: str | None = None,
+    approval_state: str | None = None,
+    recurrence: dict[str, Any] | None = None,
+    actor_id: str | None = None,
+) -> MaintenanceEvent:
+    """Edit this / this_and_future / all occurrences of a series."""
+    scope = scope.lower().replace("-", "_")
+    if scope not in {"this", "this_and_future", "all"}:
+        raise ValueError("scope must be this | this_and_future | all")
+
+    if scope == "this":
+        if not original_starts_at:
+            raise ValueError("original_starts_at required for scope=this")
+        if not starts_at or not ends_at:
+            raise ValueError("starts_at and ends_at required to reschedule one occurrence")
+        return exception_for_occurrence(
+            db,
+            event,
+            original_starts_at=original_starts_at,
+            action="reschedule",
+            new_starts_at=starts_at,
+            new_ends_at=ends_at,
+            actor_id=actor_id,
+        )
+
+    if scope == "all":
+        if starts_at and ends_at:
+            if ends_at <= starts_at:
+                raise ValueError("ends_at must be after starts_at")
+            event.starts_at = ensure_utc(starts_at)
+            event.ends_at = ensure_utc(ends_at)
+        if title is not None:
+            event.title = title
+        if description is not None:
+            event.description = description
+        if expected_impact is not None:
+            event.expected_impact = expected_impact
+        if approval_state is not None:
+            event.approval_state = ApprovalState(approval_state)
+        event.updated_by = actor_id
+        if recurrence is not None:
+            recurrence_service.upsert_rule(db, event, recurrence=recurrence)
+        db.add(
+            EventTimelineEntry(
+                event_id=event.id,
+                at=_now(),
+                actor_id=actor_id,
+                entry_type=TimelineEntryType.reschedule,
+                payload={"action": "series_edit_all"},
+            )
+        )
+        _enqueue_outbox(db, event=event, event_type="event.rescheduled", payload={"scope": "all"})
+        db.commit()
+        return get_event(db, event.id)  # type: ignore[return-value]
+
+    # this_and_future — truncate old series and spawn a new master from this occurrence
+    if not original_starts_at:
+        raise ValueError("original_starts_at required for scope=this_and_future")
+    original_starts_at = ensure_utc(original_starts_at)
+    new_starts = ensure_utc(starts_at) if starts_at else original_starts_at
+    dur = recurrence_service.duration_of(event)
+    new_ends = ensure_utc(ends_at) if ends_at else new_starts + dur
+
+    recurrence_service.truncate_series_before(event, from_occurrence_start=original_starts_at)
+    db.add(
+        EventTimelineEntry(
+            event_id=event.id,
+            at=_now(),
+            actor_id=actor_id,
+            entry_type=TimelineEntryType.system,
+            payload={
+                "action": "series_truncated",
+                "from": original_starts_at.isoformat(),
+            },
+        )
+    )
+    db.flush()
+
+    data = {
+        "kind": event.kind.value,
+        "title": title if title is not None else event.title,
+        "description": description if description is not None else event.description,
+        "expected_impact": expected_impact if expected_impact is not None else event.expected_impact,
+        "approval_state": (
+            approval_state if approval_state is not None else event.approval_state.value
+        ),
+        "starts_at": new_starts,
+        "ends_at": new_ends,
+        "timezone": event.timezone,
+        "impacts": [
+            {
+                "target_type": i.target_type.value,
+                "target_id": i.target_id,
+                "environment_id": i.environment_id,
+            }
+            for i in event.impacts
+        ],
+    }
+    if recurrence is not None:
+        data["recurrence"] = recurrence
+    elif event.recurrence_rule:
+        # Continue with same freq pattern (UNTIL from old rule stripped for new series)
+        body = event.recurrence_rule.rrule
+        parts = [
+            p
+            for p in body.split(";")
+            if not p.upper().startswith("UNTIL=") and not p.upper().startswith("COUNT=")
+        ]
+        data["recurrence"] = {"rrule": ";".join(parts)}
+
+    # Commit truncate first so create_event's commit is clean
+    db.commit()
+    return create_event(db, data=data, actor_id=actor_id)

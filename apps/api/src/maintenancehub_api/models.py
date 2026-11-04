@@ -475,7 +475,7 @@ class EventTimelineEntry(Base):
 
 
 class RecurrenceRule(Base):
-    """Stub for M3b — schema present; expansion incomplete."""
+    """RFC5545 RRULE stored on the master event; occurrences expanded at query time (M3b)."""
 
     __tablename__ = "recurrence_rules"
 

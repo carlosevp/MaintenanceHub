@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, get_current_user, require_roles
 from maintenancehub_api.domain import events as event_service
+from maintenancehub_api.domain import recurrence as recurrence_service
 from maintenancehub_api.models import EventStatus
 from maintenancehub_api.schemas.events import (
     CancelRequest,
@@ -15,7 +16,13 @@ from maintenancehub_api.schemas.events import (
     EventOut,
     EventUpdate,
     ExtendRequest,
+    OccurrenceExceptionRequest,
+    RecurrenceOut,
+    RecurrenceExceptionOut,
+    RecurrencePreviewRequest,
+    RecurrenceSpec,
     RescheduleRequest,
+    SeriesEditRequest,
     TimelineEntryOut,
     TimelineNoteCreate,
     TransitionRequest,
@@ -24,8 +31,53 @@ from maintenancehub_api.schemas.events import (
 router = APIRouter(prefix="/events", tags=["events"])
 
 
+def _recurrence_out(event) -> RecurrenceOut | None:  # noqa: ANN001
+    rule = getattr(event, "recurrence_rule", None)
+    if not rule:
+        return None
+    return RecurrenceOut(
+        rrule=rule.rrule,
+        until_at=rule.until_at,
+        summary=recurrence_service.human_summary(rule.rrule, timezone_name=event.timezone),
+        exceptions=[
+            RecurrenceExceptionOut(
+                id=ex.id,
+                original_starts_at=ex.original_starts_at,
+                action=ex.action,
+                new_starts_at=ex.new_starts_at,
+                new_ends_at=ex.new_ends_at,
+            )
+            for ex in (rule.exceptions or [])
+        ],
+    )
+
+
 def _to_out(event) -> EventOut:  # noqa: ANN001
-    return EventOut.model_validate(event)
+    data = EventOut.model_validate(event)
+    data.recurrence = _recurrence_out(event)
+    return data
+
+
+@router.post("/recurrence/preview")
+def preview_recurrence(
+    body: RecurrencePreviewRequest,
+    _: AuthUser = Depends(get_current_user),
+) -> dict:
+    try:
+        occs = recurrence_service.preview_occurrences(
+            starts_at=body.starts_at,
+            ends_at=body.ends_at,
+            timezone_name=body.timezone,
+            recurrence=body.recurrence.model_dump(exclude_none=True),
+            count=body.count,
+            exceptions=[e.model_dump(exclude_none=True) for e in body.exceptions],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    summary = recurrence_service.human_summary(
+        body.recurrence.model_dump(exclude_none=True), timezone_name=body.timezone
+    )
+    return {"summary": summary, "occurrences": occs}
 
 
 @router.get("", response_model=list[EventOut])
@@ -65,18 +117,15 @@ def create_event(
     db: Session = Depends(get_db),
     user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
 ) -> EventOut:
+    data = body.model_dump()
     if body.recurrence is not None:
-        # M3b incomplete — reject silent fake-success; allow create without applying RRULE
-        pass
+        data["recurrence"] = body.recurrence.model_dump(exclude_none=True)
     try:
-        event = event_service.create_event(db, data=body.model_dump(), actor_id=user.id)
+        if body.timezone:
+            recurrence_service.resolve_tz(body.timezone)
+        event = event_service.create_event(db, data=data, actor_id=user.id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if body.recurrence is not None:
-        # Persist flag only; expansion not implemented (see docs/LIMITATIONS.md)
-        event.is_recurring = True
-        db.commit()
-        event = event_service.get_event(db, event.id)
     return _to_out(event)
 
 
@@ -113,6 +162,128 @@ def update_event(
     event.updated_by = user.id
     db.commit()
     return _to_out(event_service.get_event(db, event_id))
+
+
+@router.get("/{event_id}/recurrence", response_model=RecurrenceOut)
+def get_recurrence(
+    event_id: str,
+    db: Session = Depends(get_db),
+    _: AuthUser = Depends(get_current_user),
+) -> RecurrenceOut:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    out = _recurrence_out(event)
+    if not out:
+        raise HTTPException(status_code=404, detail="No recurrence rule")
+    return out
+
+
+@router.put("/{event_id}/recurrence", response_model=EventOut)
+def put_recurrence(
+    event_id: str,
+    body: RecurrenceSpec,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+) -> EventOut:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        updated = event_service.set_recurrence(
+            db, event, recurrence=body.model_dump(exclude_none=True), actor_id=user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _to_out(updated)
+
+
+@router.post("/{event_id}/occurrences/exception", response_model=EventOut)
+def occurrence_exception(
+    event_id: str,
+    body: OccurrenceExceptionRequest,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+) -> EventOut:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        updated = event_service.exception_for_occurrence(
+            db,
+            event,
+            original_starts_at=body.original_starts_at,
+            action=body.action,
+            new_starts_at=body.new_starts_at,
+            new_ends_at=body.new_ends_at,
+            actor_id=user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _to_out(updated)
+
+
+@router.post("/{event_id}/series-edit", response_model=EventOut)
+def series_edit(
+    event_id: str,
+    body: SeriesEditRequest,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+) -> EventOut:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        updated = event_service.edit_series(
+            db,
+            event,
+            scope=body.scope,
+            original_starts_at=body.original_starts_at,
+            starts_at=body.starts_at,
+            ends_at=body.ends_at,
+            title=body.title,
+            description=body.description,
+            expected_impact=body.expected_impact,
+            approval_state=body.approval_state,
+            recurrence=(
+                body.recurrence.model_dump(exclude_none=True) if body.recurrence else None
+            ),
+            actor_id=user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _to_out(updated)
+
+
+@router.get("/{event_id}/occurrences")
+def list_occurrences(
+    event_id: str,
+    from_: datetime = Query(..., alias="from"),
+    to: datetime = Query(...),
+    db: Session = Depends(get_db),
+    _: AuthUser = Depends(get_current_user),
+) -> list[dict]:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    occs = recurrence_service.expand_event_occurrences(
+        event, range_start=from_, range_end=to, include_cancelled=True
+    )
+    return [
+        {
+            "occurrence_id": o.occurrence_id,
+            "event_id": o.event_id,
+            "original_starts_at": o.original_starts_at.isoformat(),
+            "starts_at": o.starts_at.isoformat(),
+            "ends_at": o.ends_at.isoformat(),
+            "cancelled": o.cancelled,
+            "is_exception": o.is_exception,
+            "approval_state": event.approval_state.value,
+            "status": event.status.value,
+            "title": event.title,
+        }
+        for o in occs
+    ]
 
 
 @router.post("/{event_id}/transition", response_model=EventOut)
@@ -169,14 +340,25 @@ def reschedule(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     try:
-        updated = event_service.reschedule_event(
-            db,
-            event,
-            starts_at=body.starts_at,
-            ends_at=body.ends_at,
-            actor_id=user.id,
-            note=body.note,
-        )
+        if event.is_recurring and body.scope != "all":
+            updated = event_service.edit_series(
+                db,
+                event,
+                scope=body.scope,
+                original_starts_at=body.original_starts_at,
+                starts_at=body.starts_at,
+                ends_at=body.ends_at,
+                actor_id=user.id,
+            )
+        else:
+            updated = event_service.reschedule_event(
+                db,
+                event,
+                starts_at=body.starts_at,
+                ends_at=body.ends_at,
+                actor_id=user.id,
+                note=body.note,
+            )
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _to_out(updated)
@@ -193,7 +375,18 @@ def cancel(
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     try:
-        updated = event_service.cancel_event(db, event, actor_id=user.id, note=body.note)
+        if event.is_recurring and body.scope == "this":
+            if not body.original_starts_at:
+                raise ValueError("original_starts_at required to cancel one occurrence")
+            updated = event_service.exception_for_occurrence(
+                db,
+                event,
+                original_starts_at=body.original_starts_at,
+                action="cancel",
+                actor_id=user.id,
+            )
+        else:
+            updated = event_service.cancel_event(db, event, actor_id=user.id, note=body.note)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _to_out(updated)
