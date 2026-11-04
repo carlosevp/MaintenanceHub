@@ -95,6 +95,9 @@ class EventOut(ORMModel):
     # When representing an expanded occurrence on dashboard
     occurrence_starts_at: Optional[datetime] = None
     is_occurrence: bool = False
+    series_id: Optional[str] = None
+    phase: str = "scheduled"
+    """approved_window | scheduled | executing | completed | cancelled"""
 
 
 class TransitionRequest(BaseModel):

@@ -16,8 +16,10 @@ from maintenancehub_api.models import (
     Favorite,
     ImpactTargetType,
     MaintenanceEvent,
+    RecurrenceRule,
     Subscription,
 )
+from maintenancehub_api.schemas.common import ensure_utc
 
 
 def hash_token(raw: str) -> str:
@@ -113,8 +115,6 @@ def events_for_token(db: Session, token: CalendarToken) -> list[MaintenanceEvent
         )
         matched_ids.update(r[0] for r in impact_event_ids)
 
-    from maintenancehub_api.models import RecurrenceRule
-
     return (
         db.query(MaintenanceEvent)
         .options(
@@ -147,12 +147,22 @@ def _escape(text: str) -> str:
     )
 
 
+def series_uid(event_id: str) -> str:
+    """Stable ICS UID for a series/master (shared by overrides via RECURRENCE-ID)."""
+    return f"{event_id}@maintenancehub"
+
+
 def build_ics(
     events: Iterable[MaintenanceEvent],
     *,
     calendar_name: str = "MaintenanceHub",
 ) -> str:
-    """Build Outlook-compatible VCALENDAR. Recurrence RRULE included when present (M3b partial)."""
+    """Build Outlook-compatible VCALENDAR.
+
+    Recurring masters emit RRULE + EXDATE for cancels. Rescheduled occurrences emit a
+    separate VEVENT with the same UID and RECURRENCE-ID = original occurrence start
+    (stable logical identity).
+    """
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
@@ -163,7 +173,7 @@ def build_ics(
     ]
     now = _fmt_dt(datetime.now(timezone.utc))
     for event in events:
-        uid = f"{event.id}@maintenancehub"
+        uid = series_uid(event.id)
         desc_parts = [
             event.description or "",
             f"Status: {event.status.value}",
@@ -173,6 +183,11 @@ def build_ics(
         if event.expected_impact:
             desc_parts.append(f"Impact: {event.expected_impact}")
         description = _escape("\n".join(p for p in desc_parts if p))
+        status = "CANCELLED" if event.status == EventStatus.cancelled else "CONFIRMED"
+        # Approved windows are still published as tentative in ICS when not confirmed
+        if event.approval_state.value == "approved_window" and status == "CONFIRMED":
+            status = "TENTATIVE"
+
         lines.extend(
             [
                 "BEGIN:VEVENT",
@@ -182,7 +197,7 @@ def build_ics(
                 f"DTEND:{_fmt_dt(event.ends_at)}",
                 f"SUMMARY:{_escape(event.title)}",
                 f"DESCRIPTION:{description}",
-                f"STATUS:{'CANCELLED' if event.status == EventStatus.cancelled else 'CONFIRMED'}",
+                f"STATUS:{status}",
             ]
         )
         if event.timezone and event.timezone != "UTC":
@@ -193,5 +208,25 @@ def build_ics(
                 if ex.action == "cancel":
                     lines.append(f"EXDATE:{_fmt_dt(ex.original_starts_at)}")
         lines.append("END:VEVENT")
+
+        # Reschedule overrides — same UID, RECURRENCE-ID = original start
+        if event.is_recurring and getattr(event, "recurrence_rule", None):
+            for ex in event.recurrence_rule.exceptions or []:
+                if ex.action != "reschedule" or not ex.new_starts_at or not ex.new_ends_at:
+                    continue
+                lines.extend(
+                    [
+                        "BEGIN:VEVENT",
+                        f"UID:{uid}",
+                        f"DTSTAMP:{now}",
+                        f"RECURRENCE-ID:{_fmt_dt(ensure_utc(ex.original_starts_at))}",
+                        f"DTSTART:{_fmt_dt(ensure_utc(ex.new_starts_at))}",
+                        f"DTEND:{_fmt_dt(ensure_utc(ex.new_ends_at))}",
+                        f"SUMMARY:{_escape(event.title)}",
+                        f"DESCRIPTION:{description}",
+                        f"STATUS:{status}",
+                        "END:VEVENT",
+                    ]
+                )
     lines.append("END:VCALENDAR")
     return "\r\n".join(lines) + "\r\n"

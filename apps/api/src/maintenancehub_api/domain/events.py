@@ -404,12 +404,21 @@ def exception_for_occurrence(
             entry_type=TimelineEntryType.system,
             payload={
                 "action": f"occurrence_{action}",
+                "occurrence_id": recurrence_service.occurrence_id_for(
+                    event.id, ensure_utc(original_starts_at)
+                ),
                 "original_starts_at": ensure_utc(original_starts_at).isoformat(),
                 "new_starts_at": new_starts_at.isoformat() if new_starts_at else None,
                 "new_ends_at": new_ends_at.isoformat() if new_ends_at else None,
             },
         )
     )
+    if action == "cancel":
+        from maintenancehub_api.domain.notifications import cancel_reminder_jobs_for_occurrence
+
+        cancel_reminder_jobs_for_occurrence(
+            db, event_id=event.id, original_starts_at=ensure_utc(original_starts_at)
+        )
     _enqueue_outbox(
         db,
         event=event,
@@ -459,6 +468,12 @@ def edit_series(
         )
 
     if scope == "all":
+        # Entire-series edit keeps existing recurrence_exceptions keyed by original_starts_at.
+        # If DTSTART/pattern shifts so those originals no longer fall on generated slots,
+        # exceptions remain stored (audit) but may stop matching — documented in LIMITATIONS.
+        prior_exception_count = (
+            len(event.recurrence_rule.exceptions) if event.recurrence_rule else 0
+        )
         if starts_at and ends_at:
             if ends_at <= starts_at:
                 raise ValueError("ends_at must be after starts_at")
@@ -481,7 +496,14 @@ def edit_series(
                 at=_now(),
                 actor_id=actor_id,
                 entry_type=TimelineEntryType.reschedule,
-                payload={"action": "series_edit_all"},
+                payload={
+                    "action": "series_edit_all",
+                    "preserved_exceptions": prior_exception_count,
+                    "note": (
+                        "Existing exceptions retained by original_starts_at; "
+                        "may not match if RRULE/DTSTART changed"
+                    ),
+                },
             )
         )
         _enqueue_outbox(db, event=event, event_type="event.rescheduled", payload={"scope": "all"})
@@ -496,6 +518,16 @@ def edit_series(
     dur = recurrence_service.duration_of(event)
     new_ends = ensure_utc(ends_at) if ends_at else new_starts + dur
 
+    # Preserve historical exceptions/reminders/deliveries on the truncated master.
+    # Future-dated exceptions after the split stay on the old rule but no longer expand
+    # (after UNTIL); they are not migrated onto the new series.
+    hist_exceptions = 0
+    if event.recurrence_rule:
+        hist_exceptions = sum(
+            1
+            for ex in (event.recurrence_rule.exceptions or [])
+            if ensure_utc(ex.original_starts_at) < original_starts_at
+        )
     recurrence_service.truncate_series_before(event, from_occurrence_start=original_starts_at)
     db.add(
         EventTimelineEntry(
@@ -506,6 +538,7 @@ def edit_series(
             payload={
                 "action": "series_truncated",
                 "from": original_starts_at.isoformat(),
+                "preserved_historical_exceptions": hist_exceptions,
             },
         )
     )

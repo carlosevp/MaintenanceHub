@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone as tz
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, get_current_user, require_roles
+from maintenancehub_api.domain import communication as comm
 from maintenancehub_api.domain import events as event_service
 from maintenancehub_api.domain import recurrence as recurrence_service
 from maintenancehub_api.models import EventStatus
@@ -55,6 +56,9 @@ def _recurrence_out(event) -> RecurrenceOut | None:  # noqa: ANN001
 def _to_out(event) -> EventOut:  # noqa: ANN001
     data = EventOut.model_validate(event)
     data.recurrence = _recurrence_out(event)
+    data.phase = comm.communication_phase(
+        event, now=datetime.now(tz.utc), starts_at=event.starts_at, ends_at=event.ends_at
+    )
     return data
 
 
@@ -269,10 +273,12 @@ def list_occurrences(
     occs = recurrence_service.expand_event_occurrences(
         event, range_start=from_, range_end=to, include_cancelled=True
     )
+    now = datetime.now(tz.utc)
     return [
         {
             "occurrence_id": o.occurrence_id,
             "event_id": o.event_id,
+            "series_id": o.event_id,
             "original_starts_at": o.original_starts_at.isoformat(),
             "starts_at": o.starts_at.isoformat(),
             "ends_at": o.ends_at.isoformat(),
@@ -280,6 +286,9 @@ def list_occurrences(
             "is_exception": o.is_exception,
             "approval_state": event.approval_state.value,
             "status": event.status.value,
+            "phase": comm.communication_phase(
+                event, now=now, starts_at=o.starts_at, ends_at=o.ends_at
+            ),
             "title": event.title,
         }
         for o in occs

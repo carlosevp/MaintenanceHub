@@ -58,7 +58,24 @@ class Occurrence:
 
     @property
     def occurrence_id(self) -> str:
-        return f"{self.event_id}@{self.original_starts_at.strftime('%Y%m%dT%H%M%SZ')}"
+        """Stable logical id: series + original occurrence start (survives reschedule)."""
+        return occurrence_id_for(self.event_id, self.original_starts_at)
+
+
+def occurrence_id_for(event_id: str, original_starts_at: datetime) -> str:
+    original_starts_at = ensure_utc(original_starts_at)
+    return f"{event_id}@{original_starts_at.strftime('%Y%m%dT%H%M%SZ')}"
+
+
+def parse_occurrence_id(occ_id: str) -> tuple[str, datetime] | None:
+    if "@" not in occ_id:
+        return None
+    event_id, stamp = occ_id.split("@", 1)
+    try:
+        dt = datetime.strptime(stamp, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return event_id, dt
 
 
 def resolve_tz(name: str) -> ZoneInfo:
@@ -418,7 +435,14 @@ def truncate_series_before(
     *,
     from_occurrence_start: datetime,
 ) -> str:
-    """Set UNTIL on existing RRULE to the instant before this occurrence (for this_and_future split)."""
+    """Set UNTIL on existing RRULE to the instant before this occurrence (for this_and_future split).
+
+    Historical exceptions (original_starts_at <= cutoff) are preserved on the old series for
+    audit/ICS. Exceptions strictly after the split point remain stored but no longer expand
+    because they fall after UNTIL — they are not copied onto the new series (subscriptions
+    stay on the master event id that owned the impact targets at create time; the new series
+    gets fresh impacts and its own reminder schedule).
+    """
     if not event.recurrence_rule:
         raise ValueError("Event has no recurrence rule")
     cutoff = ensure_utc(from_occurrence_start) - timedelta(seconds=1)
@@ -429,3 +453,25 @@ def truncate_series_before(
     event.recurrence_rule.rrule = ";".join(parts)
     event.recurrence_rule.until_at = cutoff
     return event.recurrence_rule.rrule
+
+
+def master_may_intersect_window(
+    event: MaintenanceEvent,
+    *,
+    range_start: datetime,
+    range_end: datetime,
+) -> bool:
+    """Cheap pre-filter before expand — avoids loading irrelevant history."""
+    range_start = ensure_utc(range_start)
+    range_end = ensure_utc(range_end)
+    starts = ensure_utc(event.starts_at)
+    ends = ensure_utc(event.ends_at)
+    if not event.is_recurring or not getattr(event, "recurrence_rule", None):
+        return ends >= range_start and starts <= range_end
+    # Recurring: DTSTART before window end; if until_at set, must not end before window start
+    if starts > range_end:
+        return False
+    until = event.recurrence_rule.until_at
+    if until is not None and ensure_utc(until) < range_start:
+        return False
+    return True
