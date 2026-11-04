@@ -426,6 +426,9 @@ class MaintenanceEvent(Base):
     recurrence_rule: Mapped[Optional[RecurrenceRule]] = relationship(
         back_populates="event", uselist=False, cascade="all, delete-orphan"
     )
+    occurrence_records: Mapped[list["OccurrenceRecord"]] = relationship(
+        back_populates="event", cascade="all, delete-orphan"
+    )
 
 
 class EventImpact(Base):
@@ -508,6 +511,89 @@ class RecurrenceException(Base):
     new_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     rule: Mapped[RecurrenceRule] = relationship(back_populates="exceptions")
+
+
+class OccurrenceRecord(Base):
+    """Sparse per-occurrence state/overrides — only persisted when needed (lifecycle / audit).
+
+    Logical identity is (event_id, original_starts_at) = `{event}@{original}` and is stable
+    across reschedule. Series defaults apply when override columns are null.
+    """
+
+    __tablename__ = "occurrence_records"
+    __table_args__ = (
+        UniqueConstraint("event_id", "original_starts_at", name="uq_occurrence_identity"),
+        Index("ix_occurrence_event_status", "event_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    event_id: Mapped[str] = mapped_column(
+        ForeignKey("maintenance_events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Stable series slot — never rewritten on reschedule
+    original_starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[EventStatus] = mapped_column(
+        Enum(EventStatus, name="event_status", create_constraint=False),
+        default=EventStatus.scheduled,
+        nullable=False,
+    )
+    # Optional overrides (null = inherit series defaults / expanded times)
+    expected_starts_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expected_ends_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    actual_starts_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    actual_ends_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expected_impact: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # When True, occurrence_impacts replace series EventImpact for this occurrence
+    impacts_overridden: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    event: Mapped[MaintenanceEvent] = relationship(back_populates="occurrence_records")
+    impacts: Mapped[list[OccurrenceImpact]] = relationship(
+        back_populates="occurrence", cascade="all, delete-orphan"
+    )
+
+
+class OccurrenceImpact(Base):
+    __tablename__ = "occurrence_impacts"
+    __table_args__ = (
+        UniqueConstraint(
+            "occurrence_id",
+            "target_type",
+            "target_id",
+            "environment_id",
+            name="uq_occurrence_impact",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    occurrence_id: Mapped[str] = mapped_column(
+        ForeignKey("occurrence_records.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    target_type: Mapped[ImpactTargetType] = mapped_column(
+        Enum(ImpactTargetType, name="impact_target_type", create_constraint=False),
+        nullable=False,
+    )
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    environment_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
+    )
+
+    occurrence: Mapped[OccurrenceRecord] = relationship(back_populates="impacts")
 
 
 # ---------------------------------------------------------------------------

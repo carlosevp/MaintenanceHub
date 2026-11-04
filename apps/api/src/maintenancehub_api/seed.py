@@ -451,21 +451,46 @@ def seed_demo(db: Session) -> None:
         },
         actor_id=publisher.id,
     )
-    # Cancel the second occurrence (individual scheduled skip)
+    # Demo: two occurrences of the same series in different lifecycle states
+    from maintenancehub_api.domain import occurrences as occurrence_service
     from maintenancehub_api.domain import recurrence as recurrence_service
 
     occs = recurrence_service.expand_event_occurrences(
         recurring,
         range_start=recur_start - timedelta(seconds=1),
-        range_end=recur_start + timedelta(days=21),
+        range_end=recur_start + timedelta(days=28),
     )
+    if len(occs) >= 1:
+        # First upcoming occurrence: mark in progress (human-published executing)
+        occurrence_service.transition_occurrence(
+            db,
+            recurring,
+            original_starts_at=occs[0].original_starts_at,
+            target_status=EventStatus.in_progress,
+            actor_id=publisher.id,
+            note="[DEMO] Occurrence started",
+        )
+        recurring = event_service.get_event(db, recurring.id)
     if len(occs) >= 2:
-        event_service.exception_for_occurrence(
+        # Second: leave scheduled but cancel the third as a skip if present
+        pass
+    if len(occs) >= 3:
+        occurrence_service.cancel_occurrence(
+            db,
+            recurring,
+            original_starts_at=occs[2].original_starts_at,
+            actor_id=publisher.id,
+            note="[DEMO] Skipped occurrence",
+        )
+        recurring = event_service.get_event(db, recurring.id)
+    if len(occs) >= 2:
+        # Second occurrence stays scheduled — contrast with first (in_progress)
+        occurrence_service.patch_occurrence(
             db,
             recurring,
             original_starts_at=occs[1].original_starts_at,
-            action="cancel",
             actor_id=publisher.id,
+            description="[DEMO] Still scheduled — independent of sibling in progress",
         )
 
     # Approved-window recurring series (not confirmed — reminders should not fire)

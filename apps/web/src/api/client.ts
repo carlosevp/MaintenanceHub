@@ -193,13 +193,52 @@ export const api = {
         ends_at: string;
         cancelled: boolean;
         is_exception: boolean;
+        status: string;
+        phase: string;
+        has_record?: boolean;
+        expected_impact?: string | null;
+        description?: string | null;
       }>
     >(`/api/v1/events/${id}/occurrences?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`),
   cancelOccurrence: (id: string, original_starts_at: string) =>
-    request<MaintenanceEvent>(`/api/v1/events/${id}/cancel`, {
+    request<Record<string, unknown>>(`/api/v1/events/${id}/occurrences/cancel`, {
       method: "POST",
-      body: JSON.stringify({ scope: "this", original_starts_at }),
+      body: JSON.stringify({ original_starts_at }),
     }),
+  occurrenceTransition: (
+    id: string,
+    body: { original_starts_at: string; status: string; note?: string },
+  ) =>
+    request<Record<string, unknown>>(`/api/v1/events/${id}/occurrences/transition`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  occurrenceExtend: (
+    id: string,
+    body: { original_starts_at: string; new_ends_at: string; note?: string },
+  ) =>
+    request<Record<string, unknown>>(`/api/v1/events/${id}/occurrences/extend`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  occurrencePatch: (id: string, body: unknown) =>
+    request<Record<string, unknown>>(`/api/v1/events/${id}/occurrences`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  occurrenceHistory: (id: string, original_starts_at: string) =>
+    request<{
+      occurrence_id: string;
+      timeline: TimelineEntry[];
+      deliveries: Array<{
+        id: string;
+        idempotency_key: string;
+        status: string;
+        subject?: string | null;
+      }>;
+    }>(
+      `/api/v1/events/${id}/occurrences/history?original_starts_at=${encodeURIComponent(original_starts_at)}`,
+    ),
   seriesEdit: (id: string, body: unknown) =>
     request<MaintenanceEvent>(`/api/v1/events/${id}/series-edit`, {
       method: "POST",

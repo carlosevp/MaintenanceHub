@@ -216,7 +216,10 @@ def enqueue_deliveries_for_event(
             dest = sub.destination
             subj = subject
 
-        key = f"event:{event.id}:{template_key}:{reason}:sub:{sub.id}"
+        # Per-occurrence lifecycle keys include orig_key so two occurrences of the
+        # same series can each notify start/complete/extend/cancel independently.
+        orig_key = (extra_context or {}).get("orig_key") or "master"
+        key = f"event:{event.id}:{template_key}:{reason}:orig:{orig_key}:sub:{sub.id}"
         row, is_new = create_delivery_idempotent(
             db,
             idempotency_key=key,
@@ -343,12 +346,28 @@ def schedule_reminders_for_event(db: Session, event: MaintenanceEvent) -> int:
                 key = _reminder_job_key(
                     event.id, occ.original_starts_at, sub.id, rem.offset_minutes
                 )
-                if occ.cancelled:
+                # Honour sparse occurrence lifecycle cancel / terminal states
+                from maintenancehub_api.domain import occurrences as occurrence_service
+
+                occ_rec = occurrence_service.find_record(
+                    db, event.id, occ.original_starts_at
+                )
+                occ_status = occurrence_service.effective_status(
+                    event,
+                    original_starts_at=occ.original_starts_at,
+                    record=occ_rec,
+                    cancelled_exception=occ.cancelled,
+                )
+                if occ.cancelled or occ_status in {
+                    EventStatus.cancelled,
+                    EventStatus.completed,
+                }:
                     cancel_reminder_jobs_for_occurrence(
                         db, event_id=event.id, original_starts_at=occ.original_starts_at
                     )
                     continue
-                run_at = occ.starts_at + timedelta(minutes=rem.offset_minutes)
+                eff_starts, _eff_ends = occurrence_service.effective_times(occ, occ_rec)
+                run_at = eff_starts + timedelta(minutes=rem.offset_minutes)
                 # Skip enqueue if reminder time already passed significantly (avoid storm on restart)
                 if run_at < now - timedelta(minutes=5):
                     continue
@@ -359,7 +378,7 @@ def schedule_reminders_for_event(db: Session, event: MaintenanceEvent) -> int:
                         existing.run_at = run_at
                         existing.payload = {
                             **(existing.payload or {}),
-                            "occurrence_starts_at": occ.starts_at.isoformat(),
+                            "occurrence_starts_at": eff_starts.isoformat(),
                             "original_starts_at": occ.original_starts_at.isoformat(),
                         }
                         count += 1
@@ -390,7 +409,7 @@ def schedule_reminders_for_event(db: Session, event: MaintenanceEvent) -> int:
                                     "event_id": event.id,
                                     "subscription_id": sub.id,
                                     "offset_minutes": rem.offset_minutes,
-                                    "occurrence_starts_at": occ.starts_at.isoformat(),
+                                    "occurrence_starts_at": eff_starts.isoformat(),
                                     "original_starts_at": occ.original_starts_at.isoformat(),
                                 },
                                 idempotency_key=key,
@@ -432,6 +451,9 @@ def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, A
             "from_status": payload.get("from", ""),
             "status": payload.get("to", event.status.value),
             "note": payload.get("note", ""),
+            "orig_key": payload.get("orig_key") or "master",
+            "starts_at": payload.get("starts_at", ""),
+            "ends_at": payload.get("ends_at", ""),
         }
     elif "new_ends_at" in payload:
         event_type = "event.extended"
@@ -439,12 +461,16 @@ def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, A
             "previous_ends_at": payload.get("previous_ends_at", ""),
             "ends_at": payload.get("new_ends_at", event.ends_at.isoformat()),
             "note": payload.get("note", ""),
+            "orig_key": payload.get("orig_key") or "master",
         }
     elif payload.get("action") == "created" or event_type == "event.created":
         event_type = "event.created"
-        extra = {}
+        extra = {"orig_key": payload.get("orig_key") or "master"}
     else:
-        extra = {"note": payload.get("note", "")}
+        extra = {
+            "note": payload.get("note", ""),
+            "orig_key": payload.get("orig_key") or "master",
+        }
 
     # Normalize known outbox event_type names
     mapping = {
@@ -502,7 +528,13 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
             range_end=orig_dt + timedelta(minutes=1),
             include_cancelled=True,
         )
-        if any(o.cancelled for o in occs):
+        from maintenancehub_api.domain import occurrences as occurrence_service
+
+        occ_rec = occurrence_service.find_record(db, event.id, orig_dt)
+        if any(o.cancelled for o in occs) or (
+            occ_rec
+            and occ_rec.status in {EventStatus.cancelled, EventStatus.completed}
+        ):
             cancel_reminder_jobs_for_occurrence(
                 db, event_id=event.id, original_starts_at=orig_dt
             )
@@ -510,9 +542,10 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
         # Prefer effective (possibly rescheduled) start for template context
         live = next((o for o in occs if not o.cancelled), None)
         if live:
+            eff_starts, _ = occurrence_service.effective_times(live, occ_rec)
             payload = {
                 **payload,
-                "occurrence_starts_at": live.starts_at.isoformat(),
+                "occurrence_starts_at": eff_starts.isoformat(),
             }
 
     offset = int(payload["offset_minutes"])

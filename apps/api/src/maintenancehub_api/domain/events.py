@@ -504,6 +504,8 @@ def edit_series(
     approval_state: str | None = None,
     recurrence: dict[str, Any] | None = None,
     actor_id: str | None = None,
+    exception_reconcile: str | None = None,
+    drop_exception_originals: list[datetime] | None = None,
 ) -> MaintenanceEvent:
     """Edit this / this_and_future / all occurrences of a series."""
     scope = scope.lower().replace("-", "_")
@@ -526,17 +528,60 @@ def edit_series(
         )
 
     if scope == "all":
-        # Entire-series edit keeps existing recurrence_exceptions keyed by original_starts_at.
-        # If DTSTART/pattern shifts so those originals no longer fall on generated slots,
-        # exceptions remain stored (audit) but may stop matching — documented in LIMITATIONS.
+        from maintenancehub_api.domain import occurrences as occurrence_service
+
         prior_exception_count = (
             len(event.recurrence_rule.exceptions) if event.recurrence_rule else 0
         )
+        # Prospective DTSTART / RRULE for mismatch analysis (do not mutate yet)
+        prospective_starts = ensure_utc(starts_at) if starts_at else None
+        prospective_ends = ensure_utc(ends_at) if ends_at else None
+        new_rrule_body = None
+        if recurrence is not None:
+            new_rrule_body = recurrence_service.build_rrule_string(
+                recurrence,
+                dtstart_utc=prospective_starts or ensure_utc(event.starts_at),
+                tz_name=event.timezone,
+            )
+
+        rrule_or_dtstart_changing = bool(
+            recurrence is not None
+            or prospective_starts is not None
+        )
+        reconcile_summary = None
+        if rrule_or_dtstart_changing and event.recurrence_rule:
+            # Temporarily apply prospective starts for analysis helpers
+            saved_starts, saved_ends = event.starts_at, event.ends_at
+            if prospective_starts is not None:
+                event.starts_at = prospective_starts
+            if prospective_ends is not None:
+                event.ends_at = prospective_ends
+            mismatches = occurrence_service.analyze_exception_mismatches(
+                db,
+                event,
+                new_rrule=new_rrule_body,
+                new_starts_at=prospective_starts,
+                new_ends_at=prospective_ends,
+            )
+            # Restore until after reconcile mutates exceptions; then apply field updates
+            event.starts_at, event.ends_at = saved_starts, saved_ends
+            policy = exception_reconcile or "keep_historical_require_future"
+            reconcile_summary = occurrence_service.apply_exception_reconciliation(
+                db,
+                event,
+                mismatches=mismatches,
+                policy=policy,
+                drop_originals=drop_exception_originals,
+                actor_id=actor_id,
+            )
+
         if starts_at and ends_at:
             if ends_at <= starts_at:
                 raise ValueError("ends_at must be after starts_at")
             event.starts_at = ensure_utc(starts_at)
             event.ends_at = ensure_utc(ends_at)
+        elif starts_at:
+            event.starts_at = ensure_utc(starts_at)
         if title is not None:
             event.title = title
         if description is not None:
@@ -548,6 +593,7 @@ def edit_series(
         event.updated_by = actor_id
         if recurrence is not None:
             recurrence_service.upsert_rule(db, event, recurrence=recurrence)
+        # Historical occurrence_records (execution/overrides) are never deleted on RRULE change
         db.add(
             EventTimelineEntry(
                 event_id=event.id,
@@ -557,9 +603,10 @@ def edit_series(
                 payload={
                     "action": "series_edit_all",
                     "preserved_exceptions": prior_exception_count,
+                    "reconciliation": reconcile_summary,
                     "note": (
-                        "Existing exceptions retained by original_starts_at; "
-                        "may not match if RRULE/DTSTART changed"
+                        "RRULE/DTSTART changes reconcile exceptions explicitly; "
+                        "historical occurrence execution and notification audit are preserved"
                     ),
                 },
             )

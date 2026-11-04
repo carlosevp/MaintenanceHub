@@ -168,11 +168,66 @@ class SeriesEditRequest(BaseModel):
     expected_impact: Optional[str] = None
     approval_state: Optional[str] = None
     recurrence: Optional[RecurrenceSpec] = None
+    # Exception reconciliation when RRULE/DTSTART changes (scope=all)
+    # keep_historical_require_future | drop_incompatible_future | fail_on_incompatible
+    exception_reconcile: Optional[str] = None
+    drop_exception_originals: list[datetime] = Field(default_factory=list)
 
     @field_validator("original_starts_at", "starts_at", "ends_at")
     @classmethod
     def _utc(cls, v: datetime | None) -> datetime | None:
         return ensure_utc(v) if v else v
+
+    @field_validator("drop_exception_originals")
+    @classmethod
+    def _utc_list(cls, v: list[datetime]) -> list[datetime]:
+        return [ensure_utc(x) for x in v]
+
+
+class OccurrenceActionRequest(BaseModel):
+    """Identify an occurrence by stable id or original start."""
+
+    occurrence_id: Optional[str] = None
+    original_starts_at: Optional[datetime] = None
+    note: Optional[str] = None
+
+    @field_validator("original_starts_at")
+    @classmethod
+    def _utc(cls, v: datetime | None) -> datetime | None:
+        return ensure_utc(v) if v else v
+
+
+class OccurrencePatchRequest(OccurrenceActionRequest):
+    expected_starts_at: Optional[datetime] = None
+    expected_ends_at: Optional[datetime] = None
+    expected_impact: Optional[str] = None
+    description: Optional[str] = None
+    impacts: Optional[list[ImpactIn]] = None
+    clear_impact_override: bool = False
+
+    @field_validator("expected_starts_at", "expected_ends_at")
+    @classmethod
+    def _utc_times(cls, v: datetime | None) -> datetime | None:
+        return ensure_utc(v) if v else v
+
+
+class OccurrenceTransitionRequest(OccurrenceActionRequest):
+    status: str
+    ends_at: Optional[datetime] = None
+
+    @field_validator("ends_at")
+    @classmethod
+    def _utc_ends(cls, v: datetime | None) -> datetime | None:
+        return ensure_utc(v) if v else v
+
+
+class OccurrenceExtendRequest(OccurrenceActionRequest):
+    new_ends_at: datetime
+
+    @field_validator("new_ends_at")
+    @classmethod
+    def _utc_new_end(cls, v: datetime) -> datetime:
+        return ensure_utc(v)
 
 
 class RecurrencePreviewRequest(BaseModel):

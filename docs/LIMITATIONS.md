@@ -18,12 +18,12 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 | **Admin UX** | SN unmatched, CSV import, service credentials, audit, jobs, role mappings — **API-only** (no in-app admin screens). |
 | **Native mobile / Redis / RabbitMQ** | Out of scope. |
 
-## Recurrence caveats (known)
+## Recurrence / occurrence caveats (known)
 
-- **`all` series edit + exceptions:** Exceptions remain keyed by `original_starts_at`. Changing DTSTART/RRULE can leave exceptions that no longer match generated slots (kept for audit; clear manually if obsolete).
+- **`all` series edit + exceptions:** Before RRULE/DTSTART changes, the API runs **exception reconciliation**. Historical executed occurrence records and notification audit are never discarded. Incompatible *future* exceptions require an explicit policy (`exception_reconcile=drop_incompatible_future` or `drop_exception_originals`) — silent orphaning is rejected.
 - **`this_and_future` split:** Historical data stays on the truncated master; the new series gets a new event id (subscriptions targeting the old event id are not auto-rewired — app-targeted subscriptions still match via impacts).
-- **Dashboard “current”:** Only human-published **executing** statuses in-window. A confirmed series still in `scheduled` that overlaps now is **not** treated as executing or as an outage. Approved windows never appear as current/outage and do not send reminders.
-- **Per-occurrence lifecycle:** Recurring masters typically stay `scheduled` for the series; individual occurrence execution is not a separate DB row (communicate via exceptions / series transitions).
+- **Dashboard “current”:** Only human-published **executing** statuses in-window (per occurrence when a sparse record exists). A confirmed series still in master `scheduled` that overlaps now is **not** treated as executing unless that occurrence was started. Approved windows never appear as current/outage and do not send reminders.
+- **Per-occurrence lifecycle:** Sparse `occurrence_records` persist only for overrides/state/audit (no unbounded materialization). Recurring masters typically stay `scheduled`; Start/Extend/Verifying/Complete/Cancel are per-occurrence APIs. Clock time never auto-completes.
 
 ## Permanent non-goals
 

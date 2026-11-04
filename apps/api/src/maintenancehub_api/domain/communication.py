@@ -21,6 +21,7 @@ def communication_phase(
     now: datetime,
     starts_at: datetime | None = None,
     ends_at: datetime | None = None,
+    status: EventStatus | None = None,
 ) -> str:
     """Classify human-published state for an event or occurrence window.
 
@@ -28,26 +29,37 @@ def communication_phase(
     - scheduled: confirmed, not yet / not marked executing
     - executing: human transitioned to in_progress|extended|verifying
     - completed / cancelled: terminal
+
+    Pass ``status`` to evaluate a sparse occurrence record independently of the
+    series master (recurring masters typically remain ``scheduled``).
     """
-    status = event.status
-    if status == EventStatus.cancelled:
+    effective = status if status is not None else event.status
+    if effective == EventStatus.cancelled:
         return PHASE_CANCELLED
-    if status == EventStatus.completed:
+    if effective == EventStatus.completed:
         return PHASE_COMPLETED
     if event.approval_state == ApprovalState.approved_window:
         return PHASE_APPROVED_WINDOW
-    if status in {EventStatus.in_progress, EventStatus.extended, EventStatus.verifying}:
+    if effective in {EventStatus.in_progress, EventStatus.extended, EventStatus.verifying}:
         return PHASE_EXECUTING
     return PHASE_SCHEDULED
 
 
-def is_active_outage(event: MaintenanceEvent, *, now: datetime, starts_at: datetime, ends_at: datetime) -> bool:
+def is_active_outage(
+    event: MaintenanceEvent,
+    *,
+    now: datetime,
+    starts_at: datetime,
+    ends_at: datetime,
+    status: EventStatus | None = None,
+) -> bool:
     """Manual outage that is confirmed and currently executing in its window."""
     if event.kind != EventKind.manual_outage:
         return False
     if event.approval_state != ApprovalState.confirmed_scheduled:
         return False
-    if event.status not in {
+    effective = status if status is not None else event.status
+    if effective not in {
         EventStatus.in_progress,
         EventStatus.extended,
         EventStatus.verifying,
@@ -57,25 +69,37 @@ def is_active_outage(event: MaintenanceEvent, *, now: datetime, starts_at: datet
     return ensure_utc(starts_at) <= now <= ensure_utc(ends_at)
 
 
-def is_executing_now(event: MaintenanceEvent, *, now: datetime, starts_at: datetime, ends_at: datetime) -> bool:
+def is_executing_now(
+    event: MaintenanceEvent,
+    *,
+    now: datetime,
+    starts_at: datetime,
+    ends_at: datetime,
+    status: EventStatus | None = None,
+) -> bool:
     """Confirmed work human-marked as executing and overlapping now."""
-    if communication_phase(event, now=now) != PHASE_EXECUTING:
+    if communication_phase(event, now=now, status=status) != PHASE_EXECUTING:
         return False
     now = ensure_utc(now)
     return ensure_utc(starts_at) <= now <= ensure_utc(ends_at)
 
 
 def is_upcoming_scheduled(
-    event: MaintenanceEvent, *, now: datetime, starts_at: datetime
+    event: MaintenanceEvent,
+    *,
+    now: datetime,
+    starts_at: datetime,
+    status: EventStatus | None = None,
 ) -> bool:
     """Future confirmed scheduled activity (not approved-only, not terminal)."""
-    phase = communication_phase(event, now=now)
+    effective = status if status is not None else event.status
+    phase = communication_phase(event, now=now, status=effective)
     if phase not in {PHASE_SCHEDULED, PHASE_EXECUTING}:
         # approved_window future still useful on calendar; dashboard upcoming includes it
         # as non-executing communication — include approved upcoming separately
         if phase == PHASE_APPROVED_WINDOW and ensure_utc(starts_at) > ensure_utc(now):
             return True
         return False
-    if event.status in {EventStatus.completed, EventStatus.cancelled}:
+    if effective in {EventStatus.completed, EventStatus.cancelled}:
         return False
     return ensure_utc(starts_at) > ensure_utc(now)

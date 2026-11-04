@@ -62,6 +62,7 @@ def _event_out(
     ends_at: datetime | None = None,
     occurrence_starts_at: datetime | None = None,
     is_occurrence: bool = False,
+    status: EventStatus | None = None,
 ) -> EventOut:
     data = EventOut.model_validate(e)
     data.recurrence = _recurrence_out(e)
@@ -69,6 +70,8 @@ def _event_out(
         data.starts_at = starts_at
     if ends_at is not None:
         data.ends_at = ends_at
+    if status is not None:
+        data.status = status.value
     data.occurrence_starts_at = occurrence_starts_at
     data.is_occurrence = is_occurrence
     data.series_id = e.id if is_occurrence else None
@@ -77,6 +80,7 @@ def _event_out(
         now=now,
         starts_at=starts_at or e.starts_at,
         ends_at=ends_at or e.ends_at,
+        status=status,
     )
     return data
 
@@ -162,36 +166,55 @@ def dashboard_summary(
     window_start = now - timedelta(days=1)
     window_end = horizon
 
+    from maintenancehub_api.domain import occurrences as occurrence_service
+
     for e in candidates:
-        if e.status == EventStatus.completed:
+        if e.status == EventStatus.completed and not e.is_recurring:
             continue
         if not recurrence_service.master_may_intersect_window(
             e, range_start=window_start, range_end=window_end
         ):
             continue
+        status_map = occurrence_service.overlay_status_for_expand(db, e)
         occs = recurrence_service.expand_event_occurrences(
             e, range_start=window_start, range_end=window_end
         )
         for occ in occs:
+            occ_status = None
+            for k, v in status_map.items():
+                if abs((k - occ.original_starts_at).total_seconds()) < 1:
+                    occ_status = v
+                    break
+            if occ_status is None and not e.is_recurring:
+                occ_status = e.status
+            elif occ_status is None:
+                occ_status = EventStatus.scheduled
+            if occ_status in {EventStatus.completed, EventStatus.cancelled}:
+                continue
+            record = occurrence_service.find_record(db, e.id, occ.original_starts_at)
+            starts, ends = occurrence_service.effective_times(occ, record)
             item = _event_out(
                 e,
                 now=now,
-                starts_at=occ.starts_at,
-                ends_at=occ.ends_at,
+                starts_at=starts,
+                ends_at=ends,
                 occurrence_starts_at=occ.original_starts_at,
                 is_occurrence=bool(e.is_recurring),
+                status=occ_status,
             )
             # Active outage: manual + confirmed + executing + in window (never approved-only)
             if comm.is_active_outage(
-                e, now=now, starts_at=occ.starts_at, ends_at=occ.ends_at
+                e, now=now, starts_at=starts, ends_at=ends, status=occ_status
             ):
                 outage_items.append(item)
             # Current = human-published executing + in window (not approved_window, not merely scheduled)
             if comm.is_executing_now(
-                e, now=now, starts_at=occ.starts_at, ends_at=occ.ends_at
+                e, now=now, starts_at=starts, ends_at=ends, status=occ_status
             ):
                 current_items.append(item)
-            elif comm.is_upcoming_scheduled(e, now=now, starts_at=occ.starts_at):
+            elif comm.is_upcoming_scheduled(
+                e, now=now, starts_at=starts, status=occ_status
+            ):
                 upcoming_items.append(item)
 
     current_items.sort(key=lambda x: x.starts_at)
@@ -254,13 +277,25 @@ def calendar_events(
         for e in query.order_by(MaintenanceEvent.starts_at).all()
         if recurrence_service.master_may_intersect_window(e, range_start=from_, range_end=to)
     ]
+    from maintenancehub_api.domain import occurrences as occurrence_service
+
     out: list[CalendarEventOut] = []
     for e in events:
+        status_map = occurrence_service.overlay_status_for_expand(db, e)
         for occ in recurrence_service.expand_event_occurrences(
             e, range_start=from_, range_end=to
         ):
+            occ_status = EventStatus.scheduled if e.is_recurring else e.status
+            for k, v in status_map.items():
+                if abs((k - occ.original_starts_at).total_seconds()) < 1:
+                    occ_status = v
+                    break
+            if occ_status == EventStatus.cancelled:
+                continue
+            record = occurrence_service.find_record(db, e.id, occ.original_starts_at)
+            starts, ends = occurrence_service.effective_times(occ, record)
             phase = comm.communication_phase(
-                e, now=now, starts_at=occ.starts_at, ends_at=occ.ends_at
+                e, now=now, starts_at=starts, ends_at=ends, status=occ_status
             )
             out.append(
                 CalendarEventOut(
@@ -271,10 +306,10 @@ def calendar_events(
                     ),
                     title=e.title,
                     kind=e.kind.value,
-                    status=e.status.value,
+                    status=occ_status.value,
                     approval_state=e.approval_state.value,
-                    starts_at=occ.starts_at,
-                    ends_at=occ.ends_at,
+                    starts_at=starts,
+                    ends_at=ends,
                     timezone=e.timezone,
                     is_occurrence=bool(e.is_recurring),
                     occurrence_starts_at=occ.original_starts_at if e.is_recurring else None,

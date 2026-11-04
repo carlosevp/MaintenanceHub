@@ -5,6 +5,20 @@ import { ApprovalBadge, KindBadge, StatusBadge } from "@/components/StatusBadge"
 import { fmtRange, fmtWhen } from "@/lib/format";
 import { useAuth } from "@/features/auth/AuthContext";
 
+type OccurrenceRow = {
+  occurrence_id: string;
+  original_starts_at: string;
+  starts_at: string;
+  ends_at: string;
+  cancelled: boolean;
+  is_exception: boolean;
+  status: string;
+  phase: string;
+  has_record?: boolean;
+  expected_impact?: string | null;
+  description?: string | null;
+};
+
 export function EventDetailPage() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -15,16 +29,12 @@ export function EventDetailPage() {
 
   const [event, setEvent] = useState<MaintenanceEvent | null>(null);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
-  const [occurrences, setOccurrences] = useState<
-    Array<{
-      occurrence_id: string;
-      original_starts_at: string;
-      starts_at: string;
-      ends_at: string;
-      cancelled: boolean;
-      is_exception: boolean;
-    }>
-  >([]);
+  const [occurrences, setOccurrences] = useState<OccurrenceRow[]>([]);
+  const [selectedOrig, setSelectedOrig] = useState<string | null>(null);
+  const [occHistory, setOccHistory] = useState<{
+    timeline: TimelineEntry[];
+    deliveries: Array<{ id: string; idempotency_key: string; status: string; subject?: string | null }>;
+  } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editScope, setEditScope] = useState<"this" | "this_and_future" | "all">("this");
@@ -37,7 +47,7 @@ export function EventDetailPage() {
       setEvent(e);
       setTimeline(t);
       if (e.is_recurring) {
-        const from = new Date().toISOString();
+        const from = new Date(Date.now() - 30 * 86400000).toISOString();
         const to = new Date(Date.now() + 90 * 86400000).toISOString();
         const occ = await api.eventOccurrences(e.id, from, to);
         setOccurrences(occ);
@@ -53,12 +63,24 @@ export function EventDetailPage() {
     void load();
   }, [id]);
 
+  async function loadOccHistory(originalStartsAt: string) {
+    if (!id) return;
+    setSelectedOrig(originalStartsAt);
+    try {
+      const h = await api.occurrenceHistory(id, originalStartsAt);
+      setOccHistory({ timeline: h.timeline, deliveries: h.deliveries });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load occurrence history");
+    }
+  }
+
   async function run(action: () => Promise<unknown>) {
     setBusy(true);
     setError(null);
     try {
       await action();
       await load();
+      if (selectedOrig) await loadOccHistory(selectedOrig);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Action failed");
     } finally {
@@ -75,6 +97,145 @@ export function EventDetailPage() {
     );
   }
 
+  function occActions(o: OccurrenceRow) {
+    if (!canWrite || o.cancelled || o.status === "cancelled" || o.status === "completed") {
+      return null;
+    }
+    return (
+      <div className="flex flex-wrap gap-2">
+        {o.status === "scheduled" && (
+          <button
+            type="button"
+            className="mh-btn text-xs"
+            disabled={busy}
+            onClick={() =>
+              void run(() =>
+                api.occurrenceTransition(event!.id, {
+                  original_starts_at: o.original_starts_at,
+                  status: "in_progress",
+                  note: "Started occurrence",
+                }),
+              )
+            }
+          >
+            Start
+          </button>
+        )}
+        {(o.status === "in_progress" || o.status === "extended") && (
+          <>
+            <button
+              type="button"
+              className="mh-btn text-xs"
+              disabled={busy}
+              onClick={() =>
+                void run(() =>
+                  api.occurrenceTransition(event!.id, {
+                    original_starts_at: o.original_starts_at,
+                    status: "verifying",
+                  }),
+                )
+              }
+            >
+              Verifying
+            </button>
+            <button
+              type="button"
+              className="mh-btn-ghost text-xs"
+              disabled={busy}
+              onClick={() => {
+                const iso = new Date(new Date(o.ends_at).getTime() + 60 * 60 * 1000).toISOString();
+                void run(() =>
+                  api.occurrenceExtend(event!.id, {
+                    original_starts_at: o.original_starts_at,
+                    new_ends_at: iso,
+                    note: "Extended +1h",
+                  }),
+                );
+              }}
+            >
+              Extend +1h
+            </button>
+          </>
+        )}
+        {o.status === "verifying" && (
+          <button
+            type="button"
+            className="mh-btn text-xs"
+            disabled={busy}
+            onClick={() =>
+              void run(() =>
+                api.occurrenceTransition(event!.id, {
+                  original_starts_at: o.original_starts_at,
+                  status: "completed",
+                }),
+              )
+            }
+          >
+            Complete
+          </button>
+        )}
+        <button
+          type="button"
+          className="mh-btn-ghost text-xs"
+          disabled={busy}
+          onClick={() => {
+            if (
+              window.confirm(
+                `Cancel this occurrence only (${new Date(o.original_starts_at).toLocaleString()})?`,
+              )
+            ) {
+              void run(() => api.cancelOccurrence(event!.id, o.original_starts_at));
+            }
+          }}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="mh-btn-ghost text-xs"
+          disabled={busy}
+          onClick={() => {
+            const hours = 2;
+            const newStart = new Date(new Date(o.starts_at).getTime() + 60 * 60 * 1000);
+            const newEnd = new Date(newStart.getTime() + hours * 60 * 60 * 1000);
+            const label =
+              editScope === "this"
+                ? "this occurrence only"
+                : editScope === "this_and_future"
+                  ? "this and future occurrences"
+                  : "the entire series";
+            if (
+              window.confirm(
+                `Reschedule ${label} by +1h starting ${newStart.toLocaleString()}?`,
+              )
+            ) {
+              void run(() =>
+                api.seriesEdit(event!.id, {
+                  scope: editScope,
+                  original_starts_at: o.original_starts_at,
+                  starts_at: newStart.toISOString(),
+                  ends_at: newEnd.toISOString(),
+                  exception_reconcile:
+                    editScope === "all" ? "drop_incompatible_future" : undefined,
+                }),
+              );
+            }
+          }}
+        >
+          Reschedule +1h
+        </button>
+        <button
+          type="button"
+          className="mh-btn-ghost text-xs"
+          disabled={busy}
+          onClick={() => void loadOccHistory(o.original_starts_at)}
+        >
+          History
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <Link to="/" className="text-sm font-medium text-accent hover:underline">
@@ -87,13 +248,18 @@ export function EventDetailPage() {
           <ApprovalBadge state={event.approval_state} />
           {event.is_recurring && (
             <span className="rounded-md bg-teal-100 px-2 py-0.5 text-xs font-bold uppercase text-teal-900">
-              Recurring
+              Recurring series
             </span>
           )}
         </div>
         <h1 className="mt-3 font-display text-3xl font-semibold text-ink-950">{event.title}</h1>
         <p className="mt-2 text-sm text-ink-600">{fmtRange(event.starts_at, event.ends_at)}</p>
-        <p className="mt-1 text-xs text-ink-500">Timezone: {event.timezone}</p>
+        <p className="mt-1 text-xs text-ink-500">
+          Timezone: {event.timezone}
+          {event.is_recurring
+            ? " · Series defaults below; lifecycle is per occurrence"
+            : ""}
+        </p>
         {event.description && <p className="mt-4 text-ink-800">{event.description}</p>}
         {event.expected_impact && (
           <p className="mt-2 text-sm">
@@ -119,9 +285,9 @@ export function EventDetailPage() {
           </p>
         )}
 
-        {canWrite && (
+        {canWrite && !event.is_recurring && (
           <div className="mt-6 flex flex-wrap gap-2">
-            {event.status === "scheduled" && !event.is_recurring && (
+            {event.status === "scheduled" && (
               <button
                 type="button"
                 className="mh-btn"
@@ -170,31 +336,50 @@ export function EventDetailPage() {
                 className="mh-btn-ghost"
                 disabled={busy}
                 onClick={() => {
-                  const msg = event.is_recurring
-                    ? "Cancel the entire series? (Use occurrence list to skip a single date.)"
-                    : "Cancel this event?";
-                  if (window.confirm(msg)) {
+                  if (window.confirm("Cancel this event?")) {
                     void run(() => api.cancel(event.id, "Cancelled from UI"));
                   }
                 }}
               >
-                {event.is_recurring ? "Cancel series" : "Cancel"}
+                Cancel
               </button>
             )}
+          </div>
+        )}
+
+        {canWrite && event.is_recurring && event.status !== "completed" && event.status !== "cancelled" && (
+          <div className="mt-6">
+            <button
+              type="button"
+              className="mh-btn-ghost"
+              disabled={busy}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Cancel the entire series? Use occurrence Cancel for a single date.",
+                  )
+                ) {
+                  void run(() => api.cancel(event.id, "Cancelled series from UI"));
+                }
+              }}
+            >
+              Cancel series
+            </button>
           </div>
         )}
       </div>
 
       {event.is_recurring && (
         <section className="mh-panel p-6">
-          <h2 className="font-display text-xl font-semibold">Upcoming occurrences</h2>
+          <h2 className="font-display text-xl font-semibold">Occurrences</h2>
           <p className="mt-1 text-sm text-ink-600">
-            Skip one date or choose edit scope when rescheduling. Series edits ask whether to change
-            this occurrence, this and future, or the entire series.
+            Each occurrence has its own lifecycle (Scheduled → In progress → Extended →
+            Verifying → Completed | Cancelled). Series actions use the scope control;
+            Start / Extend / Verifying / Complete / Cancel below affect only that occurrence.
           </p>
           {canWrite && (
             <div className="mt-3">
-              <label className="mh-label">Default edit scope</label>
+              <label className="mh-label">Series edit scope (reschedule)</label>
               <select
                 className="mh-input max-w-xs"
                 value={editScope}
@@ -206,84 +391,72 @@ export function EventDetailPage() {
               </select>
             </div>
           )}
-          <ul className="mt-4 space-y-2">
+          <ul className="mt-4 space-y-3">
             {occurrences.map((o) => (
               <li
                 key={o.occurrence_id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded border border-ink-100 px-3 py-2 text-sm"
+                className="rounded border border-ink-100 px-3 py-3 text-sm"
               >
-                <div>
-                  <p className={o.cancelled ? "line-through text-ink-400" : ""}>
-                    {new Date(o.starts_at).toLocaleString()} → {new Date(o.ends_at).toLocaleString()}
-                  </p>
-                  {o.cancelled && <span className="text-xs font-semibold text-danger">Skipped</span>}
-                  {o.is_exception && !o.cancelled && (
-                    <span className="text-xs font-semibold text-amber-800">Rescheduled</span>
-                  )}
-                </div>
-                {canWrite && !o.cancelled && (
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      className="mh-btn-ghost text-xs"
-                      disabled={busy}
-                      onClick={() => {
-                        if (
-                          window.confirm(
-                            `Skip this occurrence only (${new Date(o.original_starts_at).toLocaleString()})?`,
-                          )
-                        ) {
-                          void run(() => api.cancelOccurrence(event.id, o.original_starts_at));
-                        }
-                      }}
-                    >
-                      Skip
-                    </button>
-                    <button
-                      type="button"
-                      className="mh-btn-ghost text-xs"
-                      disabled={busy}
-                      onClick={() => {
-                        const hours = 2;
-                        const newStart = new Date(new Date(o.starts_at).getTime() + 60 * 60 * 1000);
-                        const newEnd = new Date(newStart.getTime() + hours * 60 * 60 * 1000);
-                        const label =
-                          editScope === "this"
-                            ? "this occurrence only"
-                            : editScope === "this_and_future"
-                              ? "this and future occurrences"
-                              : "the entire series";
-                        if (
-                          window.confirm(
-                            `Reschedule ${label} by +1h starting ${newStart.toLocaleString()}?`,
-                          )
-                        ) {
-                          void run(() =>
-                            api.seriesEdit(event.id, {
-                              scope: editScope,
-                              original_starts_at: o.original_starts_at,
-                              starts_at: newStart.toISOString(),
-                              ends_at: newEnd.toISOString(),
-                            }),
-                          );
-                        }
-                      }}
-                    >
-                      Reschedule +1h
-                    </button>
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <p className={o.cancelled || o.status === "cancelled" ? "line-through text-ink-400" : ""}>
+                      {new Date(o.starts_at).toLocaleString()} → {new Date(o.ends_at).toLocaleString()}
+                    </p>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <StatusBadge status={o.status} />
+                      <span className="text-xs text-ink-500">phase: {o.phase}</span>
+                      {o.is_exception && o.status !== "cancelled" && (
+                        <span className="text-xs font-semibold text-amber-800">Override</span>
+                      )}
+                    </div>
                   </div>
-                )}
+                </div>
+                <div className="mt-2">{occActions(o)}</div>
               </li>
             ))}
             {occurrences.length === 0 && (
-              <li className="text-sm text-ink-500">No occurrences in the next 90 days.</li>
+              <li className="text-sm text-ink-500">No occurrences in the visible window.</li>
+            )}
+          </ul>
+        </section>
+      )}
+
+      {occHistory && selectedOrig && (
+        <section className="mh-panel p-6">
+          <h2 className="font-display text-xl font-semibold">Occurrence history</h2>
+          <p className="mt-1 text-xs text-ink-500">{new Date(selectedOrig).toLocaleString()}</p>
+          <h3 className="mt-4 text-sm font-semibold">Change timeline</h3>
+          <ol className="mt-2 space-y-2">
+            {occHistory.timeline.map((t) => (
+              <li key={t.id} className="border-l-2 border-ink-200 pl-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                  {t.entry_type.replaceAll("_", " ")} · {fmtWhen(t.at)}
+                </p>
+                <pre className="mt-1 overflow-x-auto text-xs text-ink-700">
+                  {JSON.stringify(t.payload, null, 2)}
+                </pre>
+              </li>
+            ))}
+            {occHistory.timeline.length === 0 && (
+              <li className="text-sm text-ink-500">No occurrence-scoped timeline yet.</li>
+            )}
+          </ol>
+          <h3 className="mt-4 text-sm font-semibold">Notifications (immutable)</h3>
+          <ul className="mt-2 space-y-1 text-xs">
+            {occHistory.deliveries.map((d) => (
+              <li key={d.id} className="font-mono text-ink-700">
+                [{d.status}] {d.subject || d.idempotency_key}
+              </li>
+            ))}
+            {occHistory.deliveries.length === 0 && (
+              <li className="text-sm text-ink-500">No deliveries for this occurrence.</li>
             )}
           </ul>
         </section>
       )}
 
       <section className="mh-panel p-6">
-        <h2 className="font-display text-xl font-semibold">Timeline</h2>
+        <h2 className="font-display text-xl font-semibold">Series timeline</h2>
         <ol className="mt-4 space-y-3">
           {timeline.map((t) => (
             <li key={t.id} className="border-l-2 border-ink-200 pl-3">

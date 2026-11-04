@@ -20,7 +20,8 @@ Legend: **F** = fully functional · **P** = partially functional · **S** = stub
 |-------------------------|--------|----------------|-------|-----|
 | Catalog apps/envs/owners/tags/deps | **P** | API `catalog.py`; models; seed | `test_authz_catalog.py` | Catalog pages; no owner/tag admin UX depth |
 | One-time maintenance lifecycle | **F** | `domain/lifecycle.py`, `domain/events.py`, `api/events.py` | `test_lifecycle.py`, `test_events_lifecycle.py` | Create + detail transitions (subset) |
-| Recurrence (M3b) | **F** | `domain/recurrence.py` expansion; series scopes; ICS RECURRENCE-ID | `test_recurrence_*`, `test_m3b_harden`, reconcile E2E | RecurrenceEditor + calendar |
+| Per-occurrence lifecycle | **F** | Sparse `occurrence_records`; `domain/occurrences.py`; occurrence APIs; dashboard/calendar overlay | `test_occurrence_lifecycle.py` | Event detail per-occ Start/Extend/Verify/Complete/Cancel + history |
+| Recurrence (M3b) | **F** | `domain/recurrence.py` expansion; series scopes; ICS RECURRENCE-ID; exception reconciliation on RRULE change | `test_recurrence_*`, `test_m3b_harden`, reconcile E2E, occurrence tests | RecurrenceEditor + calendar + series edit reconcile |
 | Approved vs confirmed | **F** | `ApprovalState`; banner/notify respect confirmed | Banner + cross-module | Create + confirm via PATCH |
 | Manual outages | **F** | `EventKind.manual_outage` | Lifecycle API | Create + dashboard badges |
 | Dashboard current/upcoming/recent/outages | **F** | `api/dashboard.py` | Indirect via seed | `DashboardPage` |

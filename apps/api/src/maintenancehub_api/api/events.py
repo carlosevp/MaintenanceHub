@@ -9,6 +9,7 @@ from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, get_current_user, require_roles
 from maintenancehub_api.domain import communication as comm
 from maintenancehub_api.domain import events as event_service
+from maintenancehub_api.domain import occurrences as occurrence_service
 from maintenancehub_api.domain import recurrence as recurrence_service
 from maintenancehub_api.domain.authz import ensure_app_grants
 from maintenancehub_api.models import EventStatus, ImpactTargetType
@@ -18,7 +19,11 @@ from maintenancehub_api.schemas.events import (
     EventOut,
     EventUpdate,
     ExtendRequest,
+    OccurrenceActionRequest,
     OccurrenceExceptionRequest,
+    OccurrenceExtendRequest,
+    OccurrencePatchRequest,
+    OccurrenceTransitionRequest,
     RecurrenceOut,
     RecurrenceExceptionOut,
     RecurrencePreviewRequest,
@@ -272,10 +277,29 @@ def series_edit(
                 body.recurrence.model_dump(exclude_none=True) if body.recurrence else None
             ),
             actor_id=user.id,
+            exception_reconcile=body.exception_reconcile,
+            drop_exception_originals=body.drop_exception_originals or None,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _to_out(updated)
+
+
+def _resolve_orig(
+    body_occurrence_id: str | None,
+    body_original_starts_at: datetime | None,
+    event_id: str,
+) -> datetime:
+    if body_original_starts_at is not None:
+        return body_original_starts_at
+    if body_occurrence_id:
+        parsed = recurrence_service.parse_occurrence_id(body_occurrence_id)
+        if not parsed or parsed[0] != event_id:
+            raise HTTPException(status_code=400, detail="Invalid occurrence_id")
+        return parsed[1]
+    raise HTTPException(
+        status_code=400, detail="original_starts_at or occurrence_id required"
+    )
 
 
 @router.get("/{event_id}/occurrences")
@@ -292,26 +316,217 @@ def list_occurrences(
     occs = recurrence_service.expand_event_occurrences(
         event, range_start=from_, range_end=to, include_cancelled=True
     )
+    records = occurrence_service.records_for_event(db, event.id)
     now = datetime.now(tz.utc)
-    return [
-        {
-            "occurrence_id": o.occurrence_id,
-            "event_id": o.event_id,
-            "series_id": o.event_id,
-            "original_starts_at": o.original_starts_at.isoformat(),
-            "starts_at": o.starts_at.isoformat(),
-            "ends_at": o.ends_at.isoformat(),
-            "cancelled": o.cancelled,
-            "is_exception": o.is_exception,
-            "approval_state": event.approval_state.value,
-            "status": event.status.value,
-            "phase": comm.communication_phase(
-                event, now=now, starts_at=o.starts_at, ends_at=o.ends_at
+    out = []
+    for o in occs:
+        record = None
+        for k, v in records.items():
+            if abs((k - o.original_starts_at).total_seconds()) < 1:
+                record = v
+                break
+        out.append(occurrence_service.occurrence_to_dict(event, o, record, now=now))
+    return out
+
+
+@router.get("/{event_id}/occurrences/detail")
+def get_occurrence_detail(
+    event_id: str,
+    original_starts_at: datetime | None = None,
+    occurrence_id: str | None = None,
+    db: Session = Depends(get_db),
+    _: AuthUser = Depends(get_current_user),
+) -> dict:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        orig = _resolve_orig(occurrence_id, original_starts_at, event_id)
+        occ, record = occurrence_service.resolve_occurrence(
+            db, event, original_starts_at=orig
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return occurrence_service.occurrence_to_dict(event, occ, record)
+
+
+@router.post("/{event_id}/occurrences/transition")
+def occurrence_transition(
+    event_id: str,
+    body: OccurrenceTransitionRequest,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+) -> dict:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    orig = _resolve_orig(body.occurrence_id, body.original_starts_at, event_id)
+    _, record = occurrence_service.resolve_occurrence(db, event, original_starts_at=orig)
+    ensure_app_grants(
+        db,
+        user,
+        occurrence_service.impact_app_ids_for_occurrence(event, record),
+        action="mutate occurrence",
+    )
+    try:
+        occurrence_service.transition_occurrence(
+            db,
+            event,
+            original_starts_at=orig,
+            target_status=EventStatus(body.status),
+            actor_id=user.id,
+            note=body.note,
+            ends_at=body.ends_at,
+        )
+        event = event_service.get_event(db, event_id)
+        occ, record = occurrence_service.resolve_occurrence(
+            db, event, original_starts_at=orig
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return occurrence_service.occurrence_to_dict(event, occ, record)
+
+
+@router.post("/{event_id}/occurrences/extend")
+def occurrence_extend(
+    event_id: str,
+    body: OccurrenceExtendRequest,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+) -> dict:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    orig = _resolve_orig(body.occurrence_id, body.original_starts_at, event_id)
+    _, record = occurrence_service.resolve_occurrence(db, event, original_starts_at=orig)
+    ensure_app_grants(
+        db,
+        user,
+        occurrence_service.impact_app_ids_for_occurrence(event, record),
+        action="mutate occurrence",
+    )
+    try:
+        occurrence_service.extend_occurrence(
+            db,
+            event,
+            original_starts_at=orig,
+            new_ends_at=body.new_ends_at,
+            actor_id=user.id,
+            note=body.note,
+        )
+        event = event_service.get_event(db, event_id)
+        occ, record = occurrence_service.resolve_occurrence(
+            db, event, original_starts_at=orig
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return occurrence_service.occurrence_to_dict(event, occ, record)
+
+
+@router.patch("/{event_id}/occurrences")
+def occurrence_patch(
+    event_id: str,
+    body: OccurrencePatchRequest,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+) -> dict:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    orig = _resolve_orig(body.occurrence_id, body.original_starts_at, event_id)
+    _, record = occurrence_service.resolve_occurrence(db, event, original_starts_at=orig)
+    ensure_app_grants(
+        db,
+        user,
+        occurrence_service.impact_app_ids_for_occurrence(event, record),
+        action="mutate occurrence",
+    )
+    try:
+        occurrence_service.patch_occurrence(
+            db,
+            event,
+            original_starts_at=orig,
+            actor_id=user.id,
+            expected_starts_at=body.expected_starts_at,
+            expected_ends_at=body.expected_ends_at,
+            expected_impact=body.expected_impact,
+            description=body.description,
+            impacts=(
+                [i.model_dump() for i in body.impacts] if body.impacts is not None else None
             ),
-            "title": event.title,
-        }
-        for o in occs
-    ]
+            clear_impact_override=body.clear_impact_override,
+        )
+        event = event_service.get_event(db, event_id)
+        occ, record = occurrence_service.resolve_occurrence(
+            db, event, original_starts_at=orig
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return occurrence_service.occurrence_to_dict(event, occ, record)
+
+
+@router.post("/{event_id}/occurrences/cancel")
+def occurrence_cancel_lifecycle(
+    event_id: str,
+    body: OccurrenceActionRequest,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+) -> dict:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    orig = _resolve_orig(body.occurrence_id, body.original_starts_at, event_id)
+    _, record = occurrence_service.resolve_occurrence(db, event, original_starts_at=orig)
+    ensure_app_grants(
+        db,
+        user,
+        occurrence_service.impact_app_ids_for_occurrence(event, record),
+        action="mutate occurrence",
+    )
+    try:
+        occurrence_service.cancel_occurrence(
+            db, event, original_starts_at=orig, actor_id=user.id, note=body.note
+        )
+        event = event_service.get_event(db, event_id)
+        occ, record = occurrence_service.resolve_occurrence(
+            db, event, original_starts_at=orig
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return occurrence_service.occurrence_to_dict(event, occ, record)
+
+
+@router.get("/{event_id}/occurrences/history")
+def occurrence_history(
+    event_id: str,
+    original_starts_at: datetime | None = None,
+    occurrence_id: str | None = None,
+    db: Session = Depends(get_db),
+    _: AuthUser = Depends(get_current_user),
+) -> dict:
+    event = event_service.get_event(db, event_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    orig = _resolve_orig(occurrence_id, original_starts_at, event_id)
+    hist = occurrence_service.list_occurrence_history(
+        db, event, original_starts_at=orig
+    )
+    return {
+        "occurrence_id": hist["occurrence_id"],
+        "timeline": [TimelineEntryOut.model_validate(e) for e in hist["timeline"]],
+        "deliveries": [
+            {
+                "id": d.id,
+                "idempotency_key": d.idempotency_key,
+                "channel": d.channel,
+                "destination": d.destination,
+                "subject": d.subject,
+                "status": d.status.value,
+                "created_at": d.created_at.isoformat() if d.created_at else None,
+            }
+            for d in hist["deliveries"]
+        ],
+    }
 
 
 @router.post("/{event_id}/transition", response_model=EventOut)

@@ -38,8 +38,14 @@ def test_sqlite_create_all_has_core_tables_and_uniques(tmp_path: Path):
         "audit_log",
         "dependencies",
         "external_ci_links",
+        "occurrence_records",
+        "occurrence_impacts",
+        "recurrence_rules",
+        "recurrence_exceptions",
     }
     assert required.issubset(tables)
+    occ_uniques = {u["name"] for u in insp.get_unique_constraints("occurrence_records")}
+    assert "uq_occurrence_identity" in occ_uniques
 
     # Unique constraints / indexes present for idempotency keys
     job_uniques = {u["name"] for u in insp.get_unique_constraints("jobs")}
