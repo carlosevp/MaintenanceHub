@@ -1,19 +1,32 @@
 # Limitations & incomplete capabilities
 
-This document lists what is **explicitly incomplete or deferred**. Nothing listed here is “fake finished.”
+This document lists what is **explicitly incomplete or deferred**. Nothing listed here is “fake finished.” Also linked from the in-app **About** page.
 
-## Current wave (through M11)
+## Through M13
 
 | Item | Status |
 |------|--------|
-| **M3b Recurrence** | Schema + ICS RRULE emit; in-app calendar occurrence expansion / DST fixtures incomplete. |
-| **M5–M8** | Jobs, subscriptions/SMTP/log, email bridge, ICS — implemented (digests schema-only). |
-| **M9 ServiceNow poll** | **Implemented**: poll adapter (null / fixture / HTTP), upsert by sys_id, cancel mapping, unmatched queue (link/create/ignore), dry-run, push interface stub only. Live HTTP requires env secrets + `SERVICENOW_ENABLED=true` + `SERVICENOW_USE_FIXTURE=false`. |
-| **M10 CMDB CSV** | **Implemented**: upload/preview/commit/history for CIs + relationship CSV; preserves `origin=manual` unless `overwrite_manual_dependencies`. |
-| **M11 Enterprise auth** | **Implemented**: fail-closed local_dev; OIDC + LDAP provider abstraction with **mock IdP/LDAP for local/tests**; live OIDC token exchange / LDAP bind raise until fully configured. Group→role mappings, service credentials, audit log, scoped banner read. |
-| **Banner package** | Stub under `packages/banner` (full package polish → M12). Public banner API exists for service creds. |
-| **OpenShift manifests** | Minimal placeholders under `deploy/openshift/`. |
-| **Application-scoped grants enforcement** | Grants table + mappings exist; fine-grained per-app write enforcement still limited. |
+| **M0–M4** | Implemented (catalog, one-time scheduling, dashboard/calendar). |
+| **M3b Recurrence** | **Deferred / partial**: schema + ICS RRULE emit exist; in-app calendar occurrence expansion and DST fixture suite are **not** complete. |
+| **M5–M8** | Jobs, subscriptions/SMTP/log, Teams-via-email-bridge, ICS — implemented. Digest worker is schema-only. |
+| **M9 ServiceNow poll** | Implemented (null / fixture / HTTP). Live HTTP needs secrets + `SERVICENOW_ENABLED=true` + `SERVICENOW_USE_FIXTURE=false`. Push/webhooks = interface stub only. |
+| **M10 CMDB CSV** | Implemented; preserves `origin=manual` unless overwrite flag. |
+| **M11 Enterprise auth** | Fail-closed `local_dev`; OIDC/LDAP providers with **mock** for local/tests. Live token exchange / LDAP bind require real IdP config. |
+| **M12 Banner** | **Implemented**: `@maintenancehub/banner` package, `/api/v1/public/banner`, demo page, service-cred `banner:read`. |
+| **M13 Demo / deploy** | Labeled seed data; OpenShift manifests under `deploy/openshift/`; see `docs/deploy-openshift.md`. |
+| **Application-scoped grants** | Grants table + mappings exist; fine-grained per-app write enforcement still limited. |
+| **Native mobile / Redis / RabbitMQ** | Out of scope. |
+
+## Permanent non-goals
+
+- Application/infra health monitoring, synthetics, metrics, auto-status from telemetry
+- Direct Microsoft Teams API / webhooks (**Teams via email bridge only**)
+- ServiceNow push/webhooks (poll adapter only)
+- `/healthz` and `/readyz` reflecting catalog application health — they are **platform probes for MaintenanceHub pods only**
+
+## SQLite local profile
+
+Run **one API** and **one worker** only. Multi-replica lease safety requires Postgres.
 
 ## Enabling ServiceNow locally (fixtures)
 
@@ -21,21 +34,7 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 export SERVICENOW_ENABLED=true
 export SERVICENOW_USE_FIXTURE=true
 export SERVICENOW_FIXTURE_PATH=fixtures/servicenow_changes.json
-# Dry-run (no DB writes):
 curl -X POST .../api/v1/admin/servicenow/poll-now -d '{"dry_run":true}'
-# Apply fixture:
-curl -X POST .../api/v1/admin/servicenow/poll-now -d '{"fixture_records":[...]}'
 ```
 
 With `SERVICENOW_ENABLED=false`, the null adapter makes **no HTTP calls**.
-
-## Permanent non-goals
-
-- Application/infra health monitoring, synthetics, metrics, auto-status from telemetry
-- Direct Microsoft Teams API / webhooks (**Teams via email bridge only**)
-- ServiceNow push/webhooks (interface stub only)
-- `/healthz` and `/readyz` are **platform probes for MaintenanceHub pods only**
-
-## SQLite local profile
-
-Run **one worker** only. Multi-replica lease safety requires Postgres.

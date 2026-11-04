@@ -12,14 +12,19 @@ from maintenancehub_api.domain.notifications import ensure_default_templates
 from maintenancehub_api.models import (
     AppEnvironment,
     Application,
+    Dependency,
+    DependencyOrigin,
     EventStatus,
     Environment,
+    Favorite,
     ReminderOffset,
     Role,
     RoleName,
     Subscription,
     SubscriptionTarget,
     SupportGroup,
+    Tag,
+    Tagging,
     User,
     UserRole,
 )
@@ -125,9 +130,72 @@ def seed_demo(db: Session) -> None:
                 )
         apps[key] = app
 
+    # Tags + realistic manual dependency (payments → inventory)
+    for tag_key, tag_name in (("tier1", "Tier-1"), ("customer-facing", "Customer-facing")):
+        tag = db.query(Tag).filter(Tag.key == tag_key).first()
+        if not tag:
+            tag = Tag(key=tag_key, name=f"[DEMO] {tag_name}")
+            db.add(tag)
+            db.flush()
+        for app_key in ("payments-gateway", "hr-portal"):
+            exists = (
+                db.query(Tagging)
+                .filter(
+                    Tagging.tag_id == tag.id,
+                    Tagging.subject_type == "application",
+                    Tagging.subject_id == apps[app_key].id,
+                )
+                .first()
+            )
+            if not exists:
+                db.add(
+                    Tagging(
+                        tag_id=tag.id,
+                        subject_type="application",
+                        subject_id=apps[app_key].id,
+                    )
+                )
+
+    dep = (
+        db.query(Dependency)
+        .filter(
+            Dependency.from_type == "application",
+            Dependency.from_id == apps["payments-gateway"].id,
+            Dependency.to_type == "application",
+            Dependency.to_id == apps["inventory-svc"].id,
+        )
+        .first()
+    )
+    if not dep:
+        db.add(
+            Dependency(
+                from_type="application",
+                from_id=apps["payments-gateway"].id,
+                to_type="application",
+                to_id=apps["inventory-svc"].id,
+                dependency_kind="depends_on",
+                origin=DependencyOrigin.manual.value,
+            )
+        )
+
     db.commit()
 
     ensure_default_templates(db)
+
+    # Viewer favorites for dashboard demos
+    viewer = users["viewer@demo.example.com"]
+    for app_key in ("payments-gateway", "hr-portal"):
+        fav = (
+            db.query(Favorite)
+            .filter(
+                Favorite.user_id == viewer.id,
+                Favorite.application_id == apps[app_key].id,
+            )
+            .first()
+        )
+        if not fav:
+            db.add(Favorite(user_id=viewer.id, application_id=apps[app_key].id))
+    db.commit()
 
     publisher = users["publisher@demo.example.com"]
     # Demo subscription: Payments app, -24h and -1h reminders (SMTP log sink)

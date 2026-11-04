@@ -14,22 +14,16 @@ from maintenancehub_api.adapters.servicenow import get_change_adapter
 from maintenancehub_api.auth.security import hash_password
 from maintenancehub_api.config import get_settings
 from maintenancehub_api.db import get_db
-from maintenancehub_api.deps import AuthUser, require_roles, require_scopes
+from maintenancehub_api.deps import AuthUser, require_roles
 from maintenancehub_api.domain.audit import write_audit
 from maintenancehub_api.domain.csv_import import commit_import, create_import_job, preview_import
 from maintenancehub_api.domain.servicenow_sync import resolve_unmatched, run_poll
 from maintenancehub_api.models import (
-    Application,
-    ApprovalState,
     AuditLog,
     CsvImportJob,
-    EventImpact,
-    EventStatus,
     GroupRoleMapping,
-    ImpactTargetType,
     Job,
     JobStatus,
-    MaintenanceEvent,
     RoleName,
     ServiceCredential,
     SnUnmatchedRecord,
@@ -484,55 +478,4 @@ def list_audit(
     ]
 
 
-# ----- Banner (scoped) — needed for M11 service credential AC -----
-
-
-@router.get("/public/banner")
-def public_banner(
-    application_key: str = Query(...),
-    environment_key: str | None = None,
-    db: Session = Depends(get_db),
-    user: AuthUser = Depends(require_scopes("banner:read")),
-) -> list[dict[str, Any]]:
-    """Minimal public DTO — no internal notes. Service cred with banner:read or publisher/admin."""
-    if user.is_service and not user.has_scope("banner:read"):
-        raise HTTPException(status_code=403, detail="banner:read required")
-    app = db.query(Application).filter(Application.key == application_key).first()
-    if not app:
-        return []
-    now = datetime.now(timezone.utc)
-    q = (
-        db.query(MaintenanceEvent)
-        .join(EventImpact)
-        .filter(
-            EventImpact.target_type == ImpactTargetType.application,
-            EventImpact.target_id == app.id,
-            MaintenanceEvent.status.in_(
-                [
-                    EventStatus.scheduled,
-                    EventStatus.in_progress,
-                    EventStatus.extended,
-                    EventStatus.verifying,
-                ]
-            ),
-            MaintenanceEvent.approval_state == ApprovalState.confirmed_scheduled,
-            MaintenanceEvent.ends_at >= now,
-        )
-        .distinct()
-        .order_by(MaintenanceEvent.starts_at.asc())
-        .limit(20)
-    )
-    events = q.all()
-    return [
-        {
-            "id": e.id,
-            "kind": e.kind.value,
-            "title": e.title,
-            "status": e.status.value,
-            "starts_at": e.starts_at.isoformat(),
-            "ends_at": e.ends_at.isoformat(),
-            "expected_impact": e.expected_impact,
-            "approval_state": e.approval_state.value,
-        }
-        for e in events
-    ]
+# Banner API moved to api/banner.py (M12)

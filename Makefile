@@ -1,9 +1,10 @@
-.PHONY: install api web worker migrate seed test lint demo
+.PHONY: install api web worker migrate seed test lint demo banner-test web-test test-all
 
 install:
 	python3 -m venv .venv
 	. .venv/bin/activate && pip install -U pip && pip install -e "apps/api[dev]" && pip install -e apps/worker
 	cd apps/web && npm install
+	cd packages/banner && npm install
 
 api:
 	mkdir -p data
@@ -37,9 +38,19 @@ test:
 	  ENVIRONMENT=development AUTH_MODE=local_dev SEED_DEMO_DATA=false \
 	  pytest tests -q
 
+banner-test:
+	cd packages/banner && npm install && npm test && npm run build
+
+web-test:
+	cd apps/web && npm test
+
+test-all: test banner-test web-test
+
 lint:
 	. .venv/bin/activate && ruff check apps/api/src apps/worker/src tests || true
 
 demo: install migrate
 	@echo "Run: make api   (terminal 1)"
-	@echo "Run: make web   (terminal 2)"
+	@echo "Run: make worker (terminal 2)"
+	@echo "Run: make web   (terminal 3)"
+	@echo "Open http://localhost:5173 — demo users *@demo.example.com / password123"

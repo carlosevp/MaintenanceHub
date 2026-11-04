@@ -7,7 +7,9 @@ const links = [
   { to: "/calendar", label: "Calendar" },
   { to: "/catalog", label: "Catalog" },
   { to: "/subscriptions", label: "Subscriptions" },
+  { to: "/banner-demo", label: "Banner" },
   { to: "/events/new", label: "Publish" },
+  { to: "/about", label: "About" },
 ];
 
 export function Layout() {

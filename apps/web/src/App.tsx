@@ -9,6 +9,8 @@ import { CatalogDetailPage } from "@/routes/CatalogDetailPage";
 import { EventDetailPage } from "@/routes/EventDetailPage";
 import { EventCreatePage } from "@/routes/EventCreatePage";
 import { SubscriptionsPage } from "@/routes/SubscriptionsPage";
+import { BannerDemoPage } from "@/routes/BannerDemoPage";
+import { AboutPage } from "@/routes/AboutPage";
 import type { ReactNode } from "react";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -41,6 +43,8 @@ export default function App() {
           <Route path="catalog" element={<CatalogPage />} />
           <Route path="catalog/:id" element={<CatalogDetailPage />} />
           <Route path="subscriptions" element={<SubscriptionsPage />} />
+          <Route path="banner-demo" element={<BannerDemoPage />} />
+          <Route path="about" element={<AboutPage />} />
           <Route path="events/new" element={<EventCreatePage />} />
           <Route path="events/:id" element={<EventDetailPage />} />
         </Route>
