@@ -1,14 +1,14 @@
 # MaintenanceHub implementation audit
 
-**Branch audited:** `cursor/m12-m13-banner-deploy-0ed4` tip (+ this audit PR fixes)  
+**Branch audited:** reconciled tip `cursor/pr5-pr6-reconcile-0ed4` (PR #6 audit baseline + PR #5 M3b)  
 **Sources of truth:** Project store product-brief / PRD / ADRs / data-model / api-contracts / milestone-plan; repo `docs/LIMITATIONS.md`; actual source (not class existence alone).  
 **Date:** 2026-11-04
 
 ## Executive summary
 
-MaintenanceHub delivers a working **communication** stack for planned maintenance and manual outages (catalog → schedule → dashboard/calendar → subscriptions/SMTP/bridge → ICS → SN poll/CSV APIs → banner). It is **not** a monitoring product.
+MaintenanceHub delivers a working **communication** stack for planned maintenance and manual outages (catalog → schedule → dashboard/calendar → subscriptions/SMTP/bridge → ICS → SN poll/CSV APIs → banner → **M3b recurrence**). It is **not** a monitoring product.
 
-Critical integrity/security gaps found on the stacked tip were **fixed in this audit PR** (application-scoped grant enforcement, public banner without browser secrets, approval-confirm outbox, reminder reschedule refresh, SN CI→impact linking, OpenShift `API_UPSTREAM`, weak JWT / `create_all` guards, Compose+Postgres, Makefile lint). Remaining gaps are mostly **admin UI**, **M3b recurrence expansion**, **digests**, and **live IdP** — documented below, not disguised as finished.
+PR #6 audit security/integrity fixes are preserved (application-scoped grants, public banner without browser secrets, approval-confirm outbox, OpenShift `API_UPSTREAM`, weak JWT / `create_all` guards, Compose+Postgres, Makefile lint). PR #5 adds bounded RRULE expansion, occurrence identity, series edit scopes, and phase distinctions (approved ≠ outage). Remaining gaps are mostly **admin UI**, **digests**, and **live IdP**.
 
 ---
 
@@ -20,11 +20,11 @@ Legend: **F** = fully functional · **P** = partially functional · **S** = stub
 |-------------------------|--------|----------------|-------|-----|
 | Catalog apps/envs/owners/tags/deps | **P** | API `catalog.py`; models; seed | `test_authz_catalog.py` | Catalog pages; no owner/tag admin UX depth |
 | One-time maintenance lifecycle | **F** | `domain/lifecycle.py`, `domain/events.py`, `api/events.py` | `test_lifecycle.py`, `test_events_lifecycle.py` | Create + detail transitions (subset) |
-| Recurrence (M3b) | **P/S** | Flag + ICS RRULE emit; no expansion | Limited | None for RRULE editor |
+| Recurrence (M3b) | **F** | `domain/recurrence.py` expansion; series scopes; ICS RECURRENCE-ID | `test_recurrence_*`, `test_m3b_harden`, reconcile E2E | RecurrenceEditor + calendar |
 | Approved vs confirmed | **F** | `ApprovalState`; banner/notify respect confirmed | Banner + cross-module | Create + confirm via PATCH |
 | Manual outages | **F** | `EventKind.manual_outage` | Lifecycle API | Create + dashboard badges |
 | Dashboard current/upcoming/recent/outages | **F** | `api/dashboard.py` | Indirect via seed | `DashboardPage` |
-| Calendar day/week/month | **P** | API range + web calendar | Partial | `CalendarPage` (no occurrence expansion) |
+| Calendar day/week/month | **F** | Shared bounded expansion with dashboard/ICS | M3b + reconcile E2E I | `CalendarPage` |
 | Favorites | **F** | Model + API + seed | Catalog/authz | Dashboard |
 | Subscriptions + reminders | **F** | `subscriptions` + worker | Dedupe + cross-module | `SubscriptionsPage` |
 | SMTP / log sink | **F** | `adapters/smtp.py` | Bridge/ICS tests | Test-send on subscriptions |
@@ -93,12 +93,12 @@ Global RBAC was always enforced. **Application grants are now enforced** on even
 |----------|------|
 | High | No admin UI for SN unmatched, CSV, service creds, audit, jobs, role maps |
 | High | Live OIDC/LDAP not usable until real IdP configured |
-| Medium | M3b calendar occurrence expansion / DST fixtures |
+| Low | Recurrence `all` edit may orphan exceptions (documented) |
 | Medium | Digest notification worker |
 | Medium | SN events without ExternalCiLink stay impact-less |
 | Medium | Fine-grained grants on all catalog mutations / directory-group grants |
 | Low | UI missing reschedule / full transition matrix / delivery history views |
-| Low | Postgres multi-worker claim not exercised in CI |
+| Low | Postgres concurrency covered in `tests/worker/test_postgres_concurrency.py` (requires TEST_POSTGRES_URL) |
 
 ---
 
@@ -108,28 +108,25 @@ Global RBAC was always enforced. **Application grants are now enforced** on even
 |------|---------|--------|
 | Web→API | `API_UPSTREAM` env + entrypoint sed into nginx template | Fixed |
 | Migrations | Compose `migrate` service runs Alembic before API | Added |
-| Persistence | Postgres volume in Compose; OpenShift still expects external Postgres | Documented |
+| Persistence | Postgres volume in Compose; `compose-down` preserves volumes; `compose-reset` destroys | Fixed |
 | Security context | non-root 10001 | Present |
-| Makefile | Lightweight SQLite targets preserved; `compose-up` added; lint fails on errors | Fixed |
+| Makefile | Lightweight SQLite targets preserved; lint fails on errors | Fixed |
 
 ---
 
-## Functional demo checklist (executed)
+## Functional demo checklist (executed on reconcile tip)
 
 | Check | Command / action | Result |
 |-------|------------------|--------|
-| Unit/API/migration pytest | `PYTHONPATH=apps/api/src ENVIRONMENT=development AUTH_MODE=local_dev SEED_DEMO_DATA=false pytest tests -q` | **53 passed** |
+| Full pytest (+ Postgres J) | `TEST_POSTGRES_URL=postgresql+psycopg://mh:mh@127.0.0.1:5432/mh_test pytest tests -q` | **85 passed** |
 | Banner package | `cd packages/banner && npm test && npm run build` | **2 passed**, build OK |
-| Web vitest | `cd apps/web && npm test` | **2 passed** |
+| Web vitest + production build | `cd apps/web && npm test && npm run build` | **2 passed**, build OK |
 | Lint | `make lint` | **All checks passed** |
-| Cross-module: grants | `test_app_grants.py` | Pass |
-| Cross-module: confirm→notify/reminders | `test_cross_module_integrity.py` | Pass |
-| Cross-module: SN CI→impact | same | Pass |
-| Banner unauthenticated public DTO | `test_banner_public.py` | Pass |
+| E2E A–I | `tests/api/test_reconcile_e2e.py` | Pass |
+| E2E J Postgres concurrency | `tests/worker/test_postgres_concurrency.py` | Pass |
 
-Local lightweight demo (not re-run as long-lived servers in this audit): `make install && make migrate && make api` / `make worker` / `make web` → login `publisher@demo.example.com` / `password123`.
-
-Integrated Compose: `make compose-up` → http://localhost:8080 (Postgres + migrate + api + worker + web).
+Local: `make install && make migrate && make api` / `make worker` / `make web` → `publisher@demo.example.com` / `password123`.  
+Compose: `make compose-up` → http://localhost:8080 (`compose-down` keeps volumes).
 
 ---
 
@@ -137,7 +134,7 @@ Integrated Compose: `make compose-up` → http://localhost:8080 (Postgres + migr
 
 | Category | Count (approx.) |
 |----------|-----------------|
-| Fully functional | Core lifecycle, dashboard, subscriptions/SMTP/bridge, ICS, banner, fail-closed auth, seed |
-| Partially functional | Calendar recurrence, SN/CSV (API-only UX), enterprise live IdP, grants breadth, OpenShift ops polish |
-| Stubbed | Digests, SN push, M3b expansion |
+| Fully functional | Lifecycle, M3b recurrence, dashboard/calendar/ICS, subscriptions/SMTP/bridge, banner, fail-closed auth, grants on writes, seed |
+| Partially functional | SN/CSV (API-only UX), enterprise live IdP, grants breadth, OpenShift ops polish |
+| Stubbed | Digests, SN push |
 | Missing / non-goal | Monitoring, Teams APIs, admin UI surfaces, native mobile |

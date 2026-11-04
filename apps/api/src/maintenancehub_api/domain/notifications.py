@@ -25,9 +25,7 @@ from maintenancehub_api.models import (
     NotificationDelivery,
     NotificationTemplate,
     OutboxEvent,
-    ReminderOffset,
     Subscription,
-    SubscriptionTarget,
 )
 from maintenancehub_api.schemas.common import ensure_utc
 

@@ -6,9 +6,11 @@ from datetime import datetime, timedelta, timezone
 
 from maintenancehub_api.adapters.servicenow import ChangeRecord
 from maintenancehub_api.domain.notifications import (
+    _reminder_job_key,
     process_notify_dispatch,
     schedule_reminders_for_event,
 )
+from maintenancehub_api.schemas.common import ensure_utc
 from maintenancehub_api.domain.servicenow_sync import upsert_change
 from maintenancehub_api.models import (
     ApprovalState,
@@ -112,17 +114,15 @@ def test_confirm_approval_enqueues_outbox_and_reminders(client, db_session):
     # Confirm path schedules reminders; ensure at least one job exists (idempotent re-call OK).
     schedule_reminders_for_event(db_session, event)
     db_session.expire_all()
+    key = _reminder_job_key(event_id, ensure_utc(event.starts_at), sub.id, -60)
     job = (
         db_session.query(Job)
-        .filter(
-            Job.job_type == "notify_reminder",
-            Job.idempotency_key == f"reminder:event:{event_id}:sub:{sub.id}:offset:-60",
-        )
+        .filter(Job.job_type == "notify_reminder", Job.idempotency_key == key)
         .first()
     )
     assert job is not None, "expected reminder job after confirmation"
     old_run = job.run_at
-    # Reschedule window → reminder run_at must refresh
+    # Reschedule one-time window → new occurrence identity + reminder for new starts_at
     new_start = event.starts_at + timedelta(hours=2)
     new_end = event.ends_at + timedelta(hours=2)
     res = client.post(
@@ -133,16 +133,16 @@ def test_confirm_approval_enqueues_outbox_and_reminders(client, db_session):
     assert res.status_code == 200, res.text
     db_session.expire_all()
     event = db_session.get(MaintenanceEvent, event_id)
-    refreshed = schedule_reminders_for_event(db_session, event)
-    assert refreshed >= 1  # existing queued job run_at updated
+    schedule_reminders_for_event(db_session, event)
     db_session.expire_all()
+    new_key = _reminder_job_key(event_id, ensure_utc(event.starts_at), sub.id, -60)
     job = (
         db_session.query(Job)
-        .filter(Job.idempotency_key == f"reminder:event:{event_id}:sub:{sub.id}:offset:-60")
+        .filter(Job.idempotency_key == new_key)
         .one()
     )
-    assert job.run_at != old_run
-    assert job.run_at == event.starts_at + timedelta(minutes=-60)
+    assert ensure_utc(job.run_at) == ensure_utc(event.starts_at) + timedelta(minutes=-60)
+    assert ensure_utc(job.run_at) != ensure_utc(old_run)
 
 
 def test_sn_import_attaches_impact_via_external_ci(db_session, monkeypatch):
