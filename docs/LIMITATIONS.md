@@ -1,20 +1,21 @@
 # Limitations & incomplete capabilities
 
-This document lists what is **explicitly incomplete or deferred**. Nothing listed here is “fake finished.” Also linked from the in-app **About** page.
+This document lists what is **explicitly incomplete or deferred**. Nothing listed here is “fake finished.” Also linked from the in-app **About** page. See [IMPLEMENTATION_AUDIT.md](./IMPLEMENTATION_AUDIT.md) for the full requirement map.
 
-## Through M13
+## Through M13 (honest status)
 
 | Item | Status |
 |------|--------|
-| **M0–M4** | Implemented (catalog, one-time scheduling, dashboard/calendar). |
-| **M3b Recurrence** | **Deferred / partial**: schema + ICS RRULE emit exist; in-app calendar occurrence expansion and DST fixture suite are **not** complete. |
-| **M5–M8** | Jobs, subscriptions/SMTP/log, Teams-via-email-bridge, ICS — implemented. Digest worker is schema-only. |
-| **M9 ServiceNow poll** | Implemented (null / fixture / HTTP). Live HTTP needs secrets + `SERVICENOW_ENABLED=true` + `SERVICENOW_USE_FIXTURE=false`. Push/webhooks = interface stub only. |
-| **M10 CMDB CSV** | Implemented; preserves `origin=manual` unless overwrite flag. |
-| **M11 Enterprise auth** | Fail-closed `local_dev`; OIDC/LDAP providers with **mock** for local/tests. Live token exchange / LDAP bind require real IdP config. |
-| **M12 Banner** | **Implemented**: `@maintenancehub/banner` package, `/api/v1/public/banner`, demo page, service-cred `banner:read`. |
-| **M13 Demo / deploy** | Labeled seed data; OpenShift manifests under `deploy/openshift/`; see `docs/deploy-openshift.md`. |
-| **Application-scoped grants** | Grants table + mappings exist; fine-grained per-app write enforcement still limited. |
+| **M0–M4** | **Functional** via API + primary UI (catalog, one-time scheduling, dashboard/calendar). |
+| **M3b Recurrence** | **Partial / deferred**: schema + ICS RRULE emit; in-app occurrence expansion and DST fixtures **not** complete. Create accepts `recurrence` but only sets `is_recurring=True`. |
+| **M5–M8** | **Functional** jobs, SMTP/log, Teams-via-email-bridge, ICS. **Digest worker = schema-only.** Support-group subscription targets do not match. |
+| **M9 ServiceNow poll** | **Functional** null/fixture/HTTP poll, upsert by sys_id, cancel, unmatched resolve. Impacts attached **only when** `ExternalCiLink` maps `cmdb_ci` → application. Push/webhooks = interface stub. **No admin UI** (API only). |
+| **M10 CMDB CSV** | **Functional** preview/commit/history via **admin API only** — no web UI. |
+| **M11 Enterprise auth** | Fail-closed `local_dev`; OIDC/LDAP **mock** for local/tests. Live IdP exchange/bind need real config. |
+| **M12 Banner** | **Functional** package + `/api/v1/public/banner`. Public DTO is **unauthenticated** (browser-safe). Do **not** embed `client_secret` in frontends. |
+| **M13 Demo / deploy** | Seed + Compose (Postgres) + OpenShift manifests. Web nginx uses `API_UPSTREAM`. Production must run Alembic (no `create_all`). |
+| **Application-scoped grants** | **Enforced** on event mutations and application updates. Creator auto-granted. Directory-group grants and fine-grained catalog CRUD still limited. |
+| **Admin UX** | SN unmatched, CSV import, service credentials, audit, jobs, role mappings — **API-only** (no in-app admin screens). |
 | **Native mobile / Redis / RabbitMQ** | Out of scope. |
 
 ## Permanent non-goals
@@ -26,7 +27,7 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 
 ## SQLite local profile
 
-Run **one API** and **one worker** only. Multi-replica lease safety requires Postgres.
+Use Makefile targets (`make api` / `make worker` / `make web`). Run **one API** and **one worker** only. Multi-replica lease safety requires Postgres (`docker compose up`).
 
 ## Enabling ServiceNow locally (fixtures)
 

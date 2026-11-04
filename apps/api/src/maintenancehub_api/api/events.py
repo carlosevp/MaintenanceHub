@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, get_current_user, require_roles
 from maintenancehub_api.domain import events as event_service
-from maintenancehub_api.models import EventStatus
+from maintenancehub_api.domain.authz import ensure_app_grants
+from maintenancehub_api.models import EventStatus, ImpactTargetType
 from maintenancehub_api.schemas.events import (
     CancelRequest,
     EventCreate,
@@ -26,6 +27,18 @@ router = APIRouter(prefix="/events", tags=["events"])
 
 def _to_out(event) -> EventOut:  # noqa: ANN001
     return EventOut.model_validate(event)
+
+
+def _impact_app_ids(event) -> set[str]:  # noqa: ANN001
+    return {
+        i.target_id
+        for i in (event.impacts or [])
+        if i.target_type == ImpactTargetType.application
+    }
+
+
+def _require_event_grant(db, user: AuthUser, event) -> None:  # noqa: ANN001
+    ensure_app_grants(db, user, _impact_app_ids(event), action="mutate event")
 
 
 @router.get("", response_model=list[EventOut])
@@ -68,6 +81,12 @@ def create_event(
     if body.recurrence is not None:
         # M3b incomplete — reject silent fake-success; allow create without applying RRULE
         pass
+    app_ids = {
+        i.target_id
+        for i in (body.impacts or [])
+        if i.target_type == "application"
+    }
+    ensure_app_grants(db, user, app_ids, action="create event")
     try:
         event = event_service.create_event(db, data=body.model_dump(), actor_id=user.id)
     except ValueError as exc:
@@ -102,17 +121,14 @@ def update_event(
     event = event_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    data = body.model_dump(exclude_unset=True)
-    for key, value in data.items():
-        if key == "approval_state" and value is not None:
-            from maintenancehub_api.models import ApprovalState
-
-            setattr(event, key, ApprovalState(value))
-        elif value is not None:
-            setattr(event, key, value)
-    event.updated_by = user.id
-    db.commit()
-    return _to_out(event_service.get_event(db, event_id))
+    _require_event_grant(db, user, event)
+    try:
+        updated = event_service.update_event_fields(
+            db, event, data=body.model_dump(exclude_unset=True), actor_id=user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _to_out(updated)
 
 
 @router.post("/{event_id}/transition", response_model=EventOut)
@@ -125,6 +141,7 @@ def transition(
     event = event_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _require_event_grant(db, user, event)
     try:
         updated = event_service.transition_event(
             db,
@@ -149,6 +166,7 @@ def extend(
     event = event_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _require_event_grant(db, user, event)
     try:
         updated = event_service.extend_event(
             db, event, new_ends_at=body.new_ends_at, actor_id=user.id, note=body.note
@@ -168,6 +186,7 @@ def reschedule(
     event = event_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _require_event_grant(db, user, event)
     try:
         updated = event_service.reschedule_event(
             db,
@@ -192,6 +211,7 @@ def cancel(
     event = event_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _require_event_grant(db, user, event)
     try:
         updated = event_service.cancel_event(db, event, actor_id=user.id, note=body.note)
     except ValueError as exc:
@@ -221,5 +241,6 @@ def add_note(
     event = event_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
+    _require_event_grant(db, user, event)
     entry = event_service.add_timeline_note(db, event, actor_id=user.id, note=body.note)
     return TimelineEntryOut.model_validate(entry)

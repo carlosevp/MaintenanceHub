@@ -40,3 +40,15 @@ testpaths = ["../../tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+# Correctness-focused set so `make lint` fails on real issues without
+# requiring a wholesale style rewrite of the existing codebase.
+[tool.ruff.lint]
+select = [
+  "E9",   # runtime syntax
+  "F63",  # invalid print/assertions
+  "F7",   # syntax errors
+  "F82",  # undefined names
+  "F401", # unused imports
+  "F841", # unused variables
+]

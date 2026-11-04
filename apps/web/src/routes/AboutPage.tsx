@@ -23,9 +23,11 @@ export function AboutPage() {
           <li>Recurrence occurrence expansion in the in-app calendar (M3b partial)</li>
           <li>Digest notification worker (subscription digest_mode is schema-ready)</li>
           <li>Live OIDC token exchange / LDAP bind until IdP endpoints are configured</li>
+          <li>Admin screens for ServiceNow unmatched, CSV import, service credentials, audit (API only)</li>
+          <li>Do not put long-lived service client secrets in browser banner embeds</li>
         </ul>
         <p className="mt-4 text-sm text-ink-600">
-          Full list: repository file <code>docs/LIMITATIONS.md</code>.
+          Full list: <code>docs/LIMITATIONS.md</code> and <code>docs/IMPLEMENTATION_AUDIT.md</code>.
         </p>
         <Link to="/" className="mh-btn mt-6 inline-flex">
           Back to dashboard

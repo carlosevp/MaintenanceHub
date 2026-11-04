@@ -69,7 +69,6 @@ def test_manual_dependency_preserved(client):
     client.post(f"/api/v1/admin/imports/{job_id}/commit", headers=admin)
 
     apps = client.get("/api/v1/applications", headers=pub).json()
-    by_key = {a["key"]: a for a in apps}
     # keys are slugged from names
     a = next(a for a in apps if "payments" in a["key"] or a["name"].startswith("Payments"))
     b = next(a for a in apps if "hr" in a["key"] or a["name"].startswith("HR"))

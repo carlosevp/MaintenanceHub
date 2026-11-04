@@ -151,7 +151,7 @@ def test_banner_filters_by_environment_and_skips_approved_only(client):
     assert any(m["title"] == "DEV only" for m in dev)
 
 
-def test_banner_viewer_denied_service_ok(client):
+def test_banner_public_unauthenticated_and_service_scope(client):
     pub, admin, app, env_prod, _ = _bootstrap(client)
     now = datetime.now(timezone.utc)
     client.post(
@@ -174,12 +174,10 @@ def test_banner_viewer_denied_service_ok(client):
         headers=pub,
     )
 
-    viewer = auth_header(client, "viewer@test.example.com")
-    denied = client.get(
-        "/api/v1/public/banner?application_key=payments-gateway",
-        headers=viewer,
-    )
-    assert denied.status_code == 403
+    # Public DTO is intentionally readable without credentials (browser embeds).
+    anon = client.get("/api/v1/public/banner?application_key=payments-gateway")
+    assert anon.status_code == 200
+    assert any(m["title"] == "Outage" for m in anon.json())
 
     created = client.post(
         "/api/v1/admin/service-credentials",
@@ -200,3 +198,23 @@ def test_banner_viewer_denied_service_ok(client):
     )
     assert ok.status_code == 200
     assert any(m["title"] == "Outage" for m in ok.json())
+
+    # Service credential without banner:read must not succeed when authenticating.
+    bad = client.post(
+        "/api/v1/admin/service-credentials",
+        headers=admin,
+        json={"name": "wrong-scope", "scopes": ["notifications:write"]},
+    )
+    assert bad.status_code == 201
+    bad_tok = client.post(
+        "/api/v1/auth/service/token",
+        json={
+            "client_id": bad.json()["client_id"],
+            "client_secret": bad.json()["client_secret"],
+        },
+    )
+    denied = client.get(
+        "/api/v1/public/banner?application_key=payments-gateway",
+        headers={"Authorization": f"Bearer {bad_tok.json()['access_token']}"},
+    )
+    assert denied.status_code == 403

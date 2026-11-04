@@ -12,11 +12,14 @@ RUN pip install --no-cache-dir /app/apps/api \
     && mkdir -p /app/data \
     && chown -R appuser:appuser /app
 
-USER 10001
 ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/apps/api/src \
     DATABASE_URL=sqlite:////app/data/maintenancehub.db \
     ENVIRONMENT=development \
-    AUTH_MODE=local_dev
+    AUTH_MODE=local_dev \
+    PATH="/home/appuser/.local/bin:${PATH}"
 
+USER 10001
+WORKDIR /app
 EXPOSE 8000
 CMD ["uvicorn", "maintenancehub_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

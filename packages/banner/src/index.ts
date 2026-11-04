@@ -19,8 +19,13 @@ export type BannerMessage = {
 export type FetchBannerOptions = {
   /** API base, e.g. https://maintenancehub.example.com */
   apiBaseUrl: string;
-  /** Bearer token from service credential (scope banner:read) */
-  accessToken: string;
+  /**
+   * Optional Bearer token. Prefer omitting this in browser embeds —
+   * `/public/banner` is readable without credentials for the minimal public DTO.
+   * Never place long-lived `client_secret` values in frontend code; use a BFF
+   * if you need authenticated server-side fetches.
+   */
+  accessToken?: string;
   applicationKey: string;
   environmentKey?: string;
   fetchImpl?: typeof fetch;
@@ -72,11 +77,12 @@ export async function fetchBannerMessages(opts: FetchBannerOptions): Promise<Ban
   const base = opts.apiBaseUrl.replace(/\/$/, "");
   const params = new URLSearchParams({ application_key: opts.applicationKey });
   if (opts.environmentKey) params.set("environment_key", opts.environmentKey);
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (opts.accessToken) {
+    headers.Authorization = `Bearer ${opts.accessToken}`;
+  }
   const res = await fetchFn(`${base}/api/v1/public/banner?${params}`, {
-    headers: {
-      Authorization: `Bearer ${opts.accessToken}`,
-      Accept: "application/json",
-    },
+    headers,
   });
   if (!res.ok) {
     throw new Error(`Banner fetch failed: ${res.status} ${res.statusText}`);

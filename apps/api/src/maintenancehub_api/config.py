@@ -98,6 +98,17 @@ class Settings(BaseSettings):
                     "AUTH_MODE=local_dev is refused when ENVIRONMENT is "
                     f"{self.environment}. Set ALLOW_LOCAL_AUTH=true only as audited break-glass."
                 )
+        weak_secrets = {
+            "change-me-local-dev-only",
+            "change-me",
+            "local-compose-secret",
+            "test-secret",
+        }
+        if self.environment in {"staging", "production"} and self.jwt_secret in weak_secrets:
+            raise ValueError(
+                "JWT_SECRET must be set to a strong unique value when "
+                f"ENVIRONMENT={self.environment}."
+            )
         return self
 
     @property

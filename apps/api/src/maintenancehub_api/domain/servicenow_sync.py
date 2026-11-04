@@ -16,9 +16,12 @@ from maintenancehub_api.adapters.servicenow import (
 from maintenancehub_api.config import get_settings
 from maintenancehub_api.models import (
     ApprovalState,
+    EventImpact,
     EventKind,
     EventStatus,
     EventTimelineEntry,
+    ExternalCiLink,
+    ImpactTargetType,
     MaintenanceEvent,
     OutboxEvent,
     SnChangeSnapshot,
@@ -164,6 +167,7 @@ def upsert_change(db: Session, rec: ChangeRecord) -> str:
         )
         db.add(event)
         db.flush()
+        _attach_impacts_from_cmdb(db, event, rec)
         db.add(
             EventTimelineEntry(
                 event_id=event.id,
@@ -287,6 +291,73 @@ def _queue_unmatched(db: Session, rec: ChangeRecord, *, reason: str) -> None:
             status="open",
         )
     )
+
+
+def _cmdb_sys_ids(rec: ChangeRecord) -> list[str]:
+    """Extract CMDB CI sys_ids from common SN payload shapes."""
+    raw = rec.raw or {}
+    found: list[str] = []
+    ci = raw.get("cmdb_ci")
+    if isinstance(ci, dict):
+        val = ci.get("value") or ci.get("sys_id")
+        if val:
+            found.append(str(val))
+    elif isinstance(ci, str) and ci:
+        found.append(ci)
+    for key in ("cmdb_ci_sys_id", "configuration_item", "u_application"):
+        extra = raw.get(key)
+        if isinstance(extra, str) and extra:
+            found.append(extra)
+        elif isinstance(extra, dict):
+            val = extra.get("value") or extra.get("sys_id")
+            if val:
+                found.append(str(val))
+    # de-dupe preserve order
+    seen: set[str] = set()
+    out: list[str] = []
+    for x in found:
+        if x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
+def _attach_impacts_from_cmdb(db: Session, event: MaintenanceEvent, rec: ChangeRecord) -> int:
+    """Link EventImpact rows when ExternalCiLink maps SN CI → application."""
+    added = 0
+    for sys_id in _cmdb_sys_ids(rec):
+        link = (
+            db.query(ExternalCiLink)
+            .filter(
+                ExternalCiLink.source_system == SOURCE_SYSTEM,
+                ExternalCiLink.external_id == sys_id,
+                ExternalCiLink.subject_type == "application",
+            )
+            .first()
+        )
+        if not link:
+            continue
+        exists = (
+            db.query(EventImpact)
+            .filter(
+                EventImpact.event_id == event.id,
+                EventImpact.target_type == ImpactTargetType.application,
+                EventImpact.target_id == link.subject_id,
+            )
+            .first()
+        )
+        if exists:
+            continue
+        db.add(
+            EventImpact(
+                event_id=event.id,
+                target_type=ImpactTargetType.application,
+                target_id=link.subject_id,
+                environment_id=None,
+            )
+        )
+        added += 1
+    return added
 
 
 def resolve_unmatched(

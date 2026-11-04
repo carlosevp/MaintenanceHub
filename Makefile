@@ -1,4 +1,4 @@
-.PHONY: install api web worker migrate seed test lint demo banner-test web-test test-all
+.PHONY: install api web worker migrate seed test lint demo banner-test web-test test-all compose-up compose-down
 
 install:
 	python3 -m venv .venv
@@ -6,6 +6,7 @@ install:
 	cd apps/web && npm install
 	cd packages/banner && npm install
 
+# Lightweight local (SQLite) — no Docker required
 api:
 	mkdir -p data
 	. .venv/bin/activate && \
@@ -47,10 +48,16 @@ web-test:
 test-all: test banner-test web-test
 
 lint:
-	. .venv/bin/activate && ruff check apps/api/src apps/worker/src tests || true
+	. .venv/bin/activate && ruff check apps/api/src apps/worker/src tests --config apps/api/pyproject.toml
+
+# Integrated stack (Postgres + api + worker + web)
+compose-up:
+	docker compose up --build -d
+
+compose-down:
+	docker compose down -v
 
 demo: install migrate
-	@echo "Run: make api   (terminal 1)"
-	@echo "Run: make worker (terminal 2)"
-	@echo "Run: make web   (terminal 3)"
-	@echo "Open http://localhost:5173 — demo users *@demo.example.com / password123"
+	@echo "Lightweight: make api / make worker / make web"
+	@echo "Or integrated: make compose-up  → http://localhost:8080"
+	@echo "Demo users *@demo.example.com / password123"

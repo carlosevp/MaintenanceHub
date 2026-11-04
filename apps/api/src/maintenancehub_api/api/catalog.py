@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
 from maintenancehub_api.db import get_db
@@ -92,7 +92,7 @@ def list_applications(
 def create_application(
     body: ApplicationCreate,
     db: Session = Depends(get_db),
-    _: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
 ) -> Application:
     if db.query(Application).filter(Application.key == body.key).first():
         raise HTTPException(status_code=409, detail="Application key already exists")
@@ -109,6 +109,14 @@ def create_application(
                 environment_id=env.id,
                 display_name=env_in.display_name,
             )
+        )
+    # Creator receives an application-scoped grant (enforced on later writes).
+    from maintenancehub_api.domain.authz import grant_user_on_application
+
+    if not user.is_admin:
+        role = "application_owner" if user.has_role("application_owner") else "publisher"
+        grant_user_on_application(
+            db, user_id=user.id, application_id=app.id, role=role
         )
     db.commit()
     return (
@@ -141,8 +149,11 @@ def update_application(
     app_id: str,
     body: ApplicationUpdate,
     db: Session = Depends(get_db),
-    _: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
 ) -> Application:
+    from maintenancehub_api.domain.authz import ensure_app_grants
+
+    ensure_app_grants(db, user, [app_id], action="update application")
     app = db.get(Application, app_id)
     if not app:
         raise HTTPException(status_code=404, detail="Application not found")
@@ -153,7 +164,12 @@ def update_application(
     if body.status is not None:
         app.status = CatalogStatus(body.status)
     db.commit()
-    return get_application(app_id, db, _)  # type: ignore[arg-type]
+    return (
+        db.query(Application)
+        .options(joinedload(Application.environments).joinedload(AppEnvironment.environment))
+        .filter(Application.id == app_id)
+        .one()
+    )
 
 
 @router.delete("/applications/{app_id}", status_code=204)

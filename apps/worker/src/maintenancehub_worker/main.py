@@ -33,7 +33,6 @@ def main() -> None:
         fail_job,
         worker_identity,
     )
-    from maintenancehub_api.models import Job, JobStatus
     from maintenancehub_worker.handlers.notify import HANDLERS
 
     settings = get_settings()

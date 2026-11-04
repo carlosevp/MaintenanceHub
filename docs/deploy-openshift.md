@@ -49,7 +49,7 @@ oc apply -f deploy/openshift/worker.yaml
 oc apply -f deploy/openshift/web.yaml
 ```
 
-Point Routes at your DNS. Web nginx proxies `/api/` to `maintenancehub-api:8000` when using the compose-style nginx config; on OpenShift prefer routing `/api` via the API Route or adjust the web image proxy host.
+Point Routes at your DNS. The web image entrypoint substitutes `API_UPSTREAM` (default `http://api:8000`; OpenShift manifest sets `http://maintenancehub-api:8000`) into the nginx config so `/api/` reaches the API Service.
 
 ## Replicas
 

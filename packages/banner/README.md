@@ -4,6 +4,14 @@ Lightweight embeddable banner for **confirmed** planned maintenance and manual o
 
 This is **not** a monitoring probe — it only displays messages published in MaintenanceHub.
 
+## Security (browser embeds)
+
+`GET /api/v1/public/banner` returns a **minimal public DTO** and may be called **without authentication**.
+
+**Do not** put long-lived service `client_id` / `client_secret` values in frontend JavaScript, mobile apps, or public HTML. Those secrets belong only on a trusted server (BFF) or worker.
+
+Optional Bearer tokens are for server-side callers (service credential with scope `banner:read`, or publisher/admin JWT).
+
 ## Install / build
 
 ```bash
@@ -12,18 +20,12 @@ npm install
 npm run build
 ```
 
-Import from the built package (or path to `src` in a monorepo):
-
 ```ts
 import { mountMaintenanceBanner } from "@maintenancehub/banner";
 import "@maintenancehub/banner/style.css";
 ```
 
-## Usage
-
-1. Create a **service credential** with scope `banner:read` (Admin → or `POST /api/v1/admin/service-credentials`).
-2. Obtain a token: `POST /api/v1/auth/service/token` with `client_id` / `client_secret`.
-3. Mount the banner:
+## Usage (browser — no secrets)
 
 ```html
 <div id="mh-banner-root"></div>
@@ -33,7 +35,6 @@ import "@maintenancehub/banner/style.css";
   mountMaintenanceBanner({
     target: "#mh-banner-root",
     apiBaseUrl: "https://maintenancehub.example.com",
-    accessToken: "SERVICE_JWT",
     applicationKey: "payments-gateway",
     environmentKey: "PROD", // optional
     pollIntervalMs: 60000,
@@ -41,16 +42,15 @@ import "@maintenancehub/banner/style.css";
 </script>
 ```
 
-### Fetch only
+### Server-side / BFF (optional token)
 
 ```ts
 import { fetchBannerMessages } from "@maintenancehub/banner";
 
 const messages = await fetchBannerMessages({
   apiBaseUrl: "http://localhost:8000",
-  accessToken: token,
+  accessToken: shortLivedJwt, // never a client_secret
   applicationKey: "payments-gateway",
-  environmentKey: "PROD",
 });
 ```
 

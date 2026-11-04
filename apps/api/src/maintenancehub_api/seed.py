@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from maintenancehub_api.auth.security import hash_password
 from maintenancehub_api.domain import events as event_service
 from maintenancehub_api.domain.notifications import ensure_default_templates
+from maintenancehub_api.domain.authz import grant_user_on_application
 from maintenancehub_api.models import (
     AppEnvironment,
     Application,
@@ -129,6 +130,17 @@ def seed_demo(db: Session) -> None:
                     )
                 )
         apps[key] = app
+
+    # Application-scoped grants for publisher / owner (enforced on event writes)
+    publisher = users["publisher@demo.example.com"]
+    owner = users["owner@demo.example.com"]
+    for app in apps.values():
+        grant_user_on_application(
+            db, user_id=publisher.id, application_id=app.id, role=RoleName.publisher.value
+        )
+        grant_user_on_application(
+            db, user_id=owner.id, application_id=app.id, role=RoleName.application_owner.value
+        )
 
     # Tags + realistic manual dependency (payments → inventory)
     for tag_key, tag_name in (("tier1", "Tier-1"), ("customer-facing", "Customer-facing")):

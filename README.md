@@ -97,17 +97,23 @@ make test-all
 make migrate
 ```
 
-## Docker Compose
+## Docker Compose (integrated: web + api + worker + Postgres)
 
 ```bash
 docker compose up --build
+# or: make compose-up
 ```
 
+- Web: http://localhost:8080 (proxies `/api` via `API_UPSTREAM`)
 - API: http://localhost:8000  
-- Web: http://localhost:8080  
-- Optional Postgres: `docker compose --profile postgres up`
+- Postgres: localhost:5432 (`mh` / `mh` / `maintenancehub`)
+- Migrations run once via the `migrate` service before API/worker start
 
-Images run as non-root UID **10001**.
+Images run as non-root UID **10001**. For lightweight SQLite without Docker, use the Makefile targets above.
+
+## Audit
+
+See [docs/IMPLEMENTATION_AUDIT.md](docs/IMPLEMENTATION_AUDIT.md) for the requirement→implementation map and remaining gaps.
 
 ## OpenShift
 

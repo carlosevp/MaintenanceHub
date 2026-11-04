@@ -48,8 +48,14 @@ def _ensure_sqlite_dir() -> None:
 async def lifespan(_app: FastAPI):
     settings = get_settings()
     _ensure_sqlite_dir()
-    # Dev convenience: create tables if migrations not yet applied
-    Base.metadata.create_all(bind=engine)
+    # Dev convenience only — staging/production must use Alembic (avoids schema drift).
+    if settings.environment == "development":
+        Base.metadata.create_all(bind=engine)
+    else:
+        logger.info(
+            "Skipping create_all (ENVIRONMENT=%s); apply Alembic migrations before boot",
+            settings.environment,
+        )
     db = SessionLocal()
     try:
         ensure_default_templates(db)

@@ -319,3 +319,61 @@ def add_timeline_note(
     db.commit()
     db.refresh(entry)
     return entry
+
+
+def update_event_fields(
+    db: Session,
+    event: MaintenanceEvent,
+    *,
+    data: dict[str, Any],
+    actor_id: str | None,
+) -> MaintenanceEvent:
+    """Patch mutable fields. Confirming approval_state enqueues outbox + reminders."""
+    previous_approval = event.approval_state
+    for key, value in data.items():
+        if value is None:
+            continue
+        if key == "approval_state":
+            event.approval_state = ApprovalState(value)
+        else:
+            setattr(event, key, value)
+    event.updated_by = actor_id
+
+    if (
+        "approval_state" in data
+        and data["approval_state"] is not None
+        and event.approval_state != previous_approval
+    ):
+        payload = {
+            "from_approval": previous_approval.value,
+            "to_approval": event.approval_state.value,
+        }
+        db.add(
+            EventTimelineEntry(
+                event_id=event.id,
+                at=_now(),
+                actor_id=actor_id,
+                entry_type=TimelineEntryType.system,
+                payload={"action": "approval_state_change", **payload},
+            )
+        )
+        if event.approval_state == ApprovalState.confirmed_scheduled:
+            # Notify subscribers now that the window is confirmed (SN imports start as approved_window).
+            _enqueue_outbox(
+                db,
+                event=event,
+                event_type="event.confirmed",
+                payload=payload,
+            )
+
+    db.commit()
+    updated = get_event(db, event.id)
+    if (
+        updated
+        and updated.approval_state == ApprovalState.confirmed_scheduled
+        and previous_approval != ApprovalState.confirmed_scheduled
+    ):
+        from maintenancehub_api.domain.notifications import schedule_reminders_for_event
+
+        schedule_reminders_for_event(db, updated)
+    return updated  # type: ignore[return-value]

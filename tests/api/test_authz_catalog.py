@@ -1,4 +1,3 @@
-from datetime import datetime, timedelta, timezone
 
 from tests.conftest import auth_header
 

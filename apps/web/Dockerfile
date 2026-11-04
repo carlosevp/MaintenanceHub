@@ -11,7 +11,10 @@ RUN adduser -D -u 10001 appuser \
     && chown -R 10001:0 /usr/share/nginx/html /tmp \
     && chmod -R g+w /tmp
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY apps/web/nginx.conf /etc/nginx/nginx.conf
+COPY apps/web/nginx.conf.template /etc/nginx/nginx.conf.template
+COPY apps/web/docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+ENV API_UPSTREAM=http://api:8000
 USER 10001
 EXPOSE 8080
-CMD ["nginx", "-g", "daemon off;"]
+ENTRYPOINT ["/docker-entrypoint.sh"]

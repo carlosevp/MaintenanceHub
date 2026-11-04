@@ -76,7 +76,7 @@ def test_fail_then_dead_letter(db_session, monkeypatch):
 
     get_settings.cache_clear()
 
-    job = _add_job(db_session, "dead-1")
+    _add_job(db_session, "dead-1")
     c1 = claim_jobs(db_session, worker_id="w", limit=1)[0]
     assert fail_job(db_session, c1, worker_id="w", error="boom1")
     db_session.refresh(c1)

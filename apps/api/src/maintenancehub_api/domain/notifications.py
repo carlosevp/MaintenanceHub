@@ -24,9 +24,7 @@ from maintenancehub_api.models import (
     NotificationDelivery,
     NotificationTemplate,
     OutboxEvent,
-    ReminderOffset,
     Subscription,
-    SubscriptionTarget,
 )
 
 logger = logging.getLogger("maintenancehub.notifications")
@@ -266,6 +264,17 @@ def schedule_reminders_for_event(db: Session, event: MaintenanceEvent) -> int:
             key = f"reminder:event:{event.id}:sub:{sub.id}:offset:{rem.offset_minutes}"
             existing = db.query(Job).filter(Job.idempotency_key == key).first()
             if existing:
+                # After reschedule, refresh run_at on still-queued reminder jobs.
+                if existing.status == JobStatus.queued and existing.run_at != run_at:
+                    existing.run_at = run_at
+                    existing.payload = {
+                        **(existing.payload or {}),
+                        "event_id": event.id,
+                        "subscription_id": sub.id,
+                        "offset_minutes": rem.offset_minutes,
+                        "starts_at": event.starts_at.isoformat(),
+                    }
+                    count += 1
                 continue
             db.add(
                 Job(
@@ -274,6 +283,7 @@ def schedule_reminders_for_event(db: Session, event: MaintenanceEvent) -> int:
                         "event_id": event.id,
                         "subscription_id": sub.id,
                         "offset_minutes": rem.offset_minutes,
+                        "starts_at": event.starts_at.isoformat(),
                     },
                     idempotency_key=key,
                     status=JobStatus.queued,
@@ -327,6 +337,7 @@ def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, A
     # Normalize known outbox event_type names
     mapping = {
         "event.created": "event.created",
+        "event.confirmed": "event.created",  # reuse created template when approval confirmed
         "event.transitioned": "event.transitioned",
         "event.extended": "event.extended",
         "event.rescheduled": "event.rescheduled",
@@ -338,8 +349,11 @@ def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, A
     n = enqueue_deliveries_for_event(
         db, event, template_key=template_key, extra_context=extra, reason=template_key
     )
-    # On create / schedule, also schedule advance reminders
-    if template_key in {"event.created", "event.rescheduled"}:
+    # On create / confirm / reschedule, schedule (or refresh) advance reminders
+    if event_type in {"event.created", "event.confirmed", "event.rescheduled"} or template_key in {
+        "event.created",
+        "event.rescheduled",
+    }:
         schedule_reminders_for_event(db, event)
     return {"deliveries_enqueued": n}
 

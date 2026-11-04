@@ -31,9 +31,9 @@ export function BannerDemoPage() {
     try {
       const params = new URLSearchParams({ application_key: appKey });
       if (envKey) params.set("environment_key", envKey);
-      const res = await fetch(`/api/v1/public/banner?${params}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      const headers: HeadersInit = {};
+      if (token.trim()) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(`/api/v1/public/banner?${params}`, { headers });
       if (!res.ok) throw new Error(await res.text());
       const data = (await res.json()) as Msg[];
       setMessages(data);
@@ -55,8 +55,9 @@ export function BannerDemoPage() {
         <h1 className="font-display text-3xl font-semibold">Banner embed demo</h1>
         <p className="mt-2 text-sm text-ink-600">
           Preview of <code>@maintenancehub/banner</code> against{" "}
-          <code>/api/v1/public/banner</code>. Use a user JWT or a service credential with{" "}
-          <code>banner:read</code>. This is communication only — not monitoring.
+          <code>/api/v1/public/banner</code>. Auth is optional for the public DTO — do{" "}
+          <strong>not</strong> paste long-lived service <code>client_secret</code> values into
+          browsers. Optional Bearer is for demos only. This is communication only — not monitoring.
         </p>
         <form className="mt-4 space-y-3" onSubmit={(e) => void load(e)}>
           <div>
@@ -68,7 +69,7 @@ export function BannerDemoPage() {
             <input className="mh-input" value={envKey} onChange={(e) => setEnvKey(e.target.value)} />
           </div>
           <div>
-            <label className="mh-label">Bearer token</label>
+            <label className="mh-label">Bearer token (optional)</label>
             <input className="mh-input" value={token} onChange={(e) => setToken(e.target.value)} />
           </div>
           <button className="mh-btn" type="submit">
