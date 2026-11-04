@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Application, type Environment } from "@/api/client";
+import { RecurrenceEditor, defaultRecurrence, type RecurrenceValue } from "@/components/RecurrenceEditor";
 
 export function EventCreatePage() {
   const [params] = useSearchParams();
@@ -21,6 +22,8 @@ export function EventCreatePage() {
   const [envId, setEnvId] = useState("");
   const [appId2, setAppId2] = useState("");
   const [envId2, setEnvId2] = useState("");
+  const [recurring, setRecurring] = useState(false);
+  const [recurrence, setRecurrence] = useState<RecurrenceValue>(defaultRecurrence());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -50,7 +53,7 @@ export function EventCreatePage() {
           environment_id: envId2 || null,
         });
       }
-      const created = await api.createEvent({
+      const body: Record<string, unknown> = {
         kind,
         title,
         description,
@@ -60,7 +63,22 @@ export function EventCreatePage() {
         ends_at: new Date(ends).toISOString(),
         timezone,
         impacts,
-      });
+      };
+      if (recurring && kind === "planned_maintenance") {
+        const rec: Record<string, unknown> = {
+          freq: recurrence.freq,
+          interval: recurrence.interval,
+        };
+        if (recurrence.freq === "CUSTOM") rec.rrule = recurrence.rrule;
+        if (recurrence.freq === "WEEKLY") rec.byweekday = recurrence.byweekday;
+        if (recurrence.freq === "MONTHLY" && recurrence.bymonthday != null) {
+          rec.bymonthday = recurrence.bymonthday;
+        }
+        if (recurrence.until) rec.until = new Date(recurrence.until).toISOString();
+        if (recurrence.count) rec.count = recurrence.count;
+        body.recurrence = rec;
+      }
+      const created = await api.createEvent(body);
       navigate(`/events/${created.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create failed");
@@ -164,6 +182,18 @@ export function EventCreatePage() {
             </label>
             <input id="tz" className="mh-input" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
           </div>
+
+          {kind === "planned_maintenance" && (
+            <RecurrenceEditor
+              enabled={recurring}
+              onEnabledChange={setRecurring}
+              value={recurrence}
+              onChange={setRecurrence}
+              startsAt={starts}
+              endsAt={ends}
+              timezone={timezone}
+            />
+          )}
 
           <fieldset className="rounded-lg border border-ink-200 p-3">
             <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-500">

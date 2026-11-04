@@ -4,7 +4,7 @@ Internal **Maintenance & Outage Communication Platform**.
 
 This is **not** a monitoring product. Status is published by people (planned maintenance, extensions, manual outages). Platform `/healthz` and `/readyz` exist only for pod liveness/readiness.
 
-Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M13** (recurrence expansion **M3b** still partial — see [docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
+Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M13** including **M3b recurrence** (see [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for remaining gaps).
 
 ## Stack
 
@@ -59,7 +59,7 @@ Open http://localhost:5173 — Banner demo at `/banner-demo`, limitations at `/a
 | `owner@demo.example.com` | `password123` | application_owner |
 | `admin@demo.example.com` | `password123` | platform_administrator |
 
-All demo titles are prefixed with `[DEMO]`. Seed includes apps (`payments-gateway`, `hr-portal`, `inventory-svc`), tags, a manual dependency, favorites, current/upcoming/recent events, and a manual outage.
+All demo titles are prefixed with `[DEMO]`. Seed includes apps (`payments-gateway`, `hr-portal`, `inventory-svc`), tags, a manual dependency, favorites, current/upcoming/recent events, a manual outage, and a **weekly recurring** Payments window (with one skipped occurrence) plus a monthly **approved_window** series.
 
 ### Banner package
 
@@ -133,7 +133,7 @@ cd apps/web && npm test
 | Milestone | Met? |
 |-----------|------|
 | M0–M4 Bootstrap, catalog, scheduling, dashboard | Yes |
-| M3b Recurrence expansion | **Partial** (schema + ICS RRULE; calendar expansion incomplete) |
+| M3b Recurrence expansion | Yes (RRULE + exceptions + calendar/ICS/reminders; bounded expand) |
 | M5–M8 Jobs, notify, bridge, ICS | Yes |
 | M9 ServiceNow poll | Yes (fixture/null by default) |
 | M10 CMDB CSV import | Yes |

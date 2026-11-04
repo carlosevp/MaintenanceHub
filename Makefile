@@ -1,4 +1,4 @@
-.PHONY: install api web worker migrate seed test lint demo banner-test web-test test-all compose-up compose-down
+.PHONY: install api web worker migrate seed test lint demo banner-test web-test test-all compose-up compose-down compose-reset
 
 install:
 	python3 -m venv .venv
@@ -54,10 +54,16 @@ lint:
 compose-up:
 	docker compose up --build -d
 
+# Preserve named volumes (Postgres data) by default
 compose-down:
+	docker compose down
+
+# Destructive: remove containers AND volumes
+compose-reset:
 	docker compose down -v
 
 demo: install migrate
 	@echo "Lightweight: make api / make worker / make web"
 	@echo "Or integrated: make compose-up  → http://localhost:8080"
 	@echo "Demo users *@demo.example.com / password123"
+	@echo "compose-down keeps volumes; compose-reset destroys them"

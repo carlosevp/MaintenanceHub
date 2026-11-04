@@ -82,7 +82,7 @@ export function CalendarPage() {
         <div>
           <h1 className="font-display text-3xl font-semibold text-ink-950">Maintenance calendar</h1>
           <p className="mt-1 text-sm text-ink-600">
-            Day, week, and month views. Recurring occurrence expansion is incomplete (M3b).
+            Day, week, and month views with recurring occurrence expansion (IANA TZ / DST-aware).
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -154,7 +154,7 @@ export function CalendarPage() {
                     {dayEvents.slice(0, 3).map((e) => (
                       <li key={e.id}>
                         <Link
-                          to={`/events/${e.id}`}
+                          to={`/events/${e.id.split("@")[0]}`}
                           className={clsx(
                             "block truncate rounded px-1 py-0.5 text-[11px] font-medium",
                             e.kind === "manual_outage"
@@ -196,7 +196,10 @@ export function CalendarPage() {
                   <ul className="mt-3 space-y-3">
                     {dayEvents.map((e) => (
                       <li key={e.id} className="flex flex-wrap items-center justify-between gap-2">
-                        <Link to={`/events/${e.id}`} className="font-medium hover:underline">
+                        <Link
+                          to={`/events/${e.id.split("@")[0]}`}
+                          className="font-medium hover:underline"
+                        >
                           {e.title}
                         </Link>
                         <div className="flex gap-2">

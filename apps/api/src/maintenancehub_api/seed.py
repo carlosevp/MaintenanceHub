@@ -407,3 +407,92 @@ def seed_demo(db: Session) -> None:
         },
         actor_id=publisher.id,
     )
+
+    # Recurring weekly maintenance (M3b) — Sundays 02:00–04:00 America/Chicago
+    # Demonstrates series + one cancelled occurrence + overlapping window with one-shot outages.
+    from zoneinfo import ZoneInfo
+
+    chi = ZoneInfo("America/Chicago")
+    # Next Sunday 02:00 Chicago
+    local_now = now.astimezone(chi)
+    days_ahead = (6 - local_now.weekday()) % 7  # Sunday=6 in weekday()
+    if days_ahead == 0 and local_now.hour >= 2:
+        days_ahead = 7
+    next_sun = (local_now + timedelta(days=days_ahead)).replace(
+        hour=2, minute=0, second=0, microsecond=0
+    )
+    recur_start = next_sun.astimezone(timezone.utc)
+    recur_end = (next_sun + timedelta(hours=2)).astimezone(timezone.utc)
+    until_local = next_sun + timedelta(weeks=12)
+    recurring = event_service.create_event(
+        db,
+        data={
+            "kind": "planned_maintenance",
+            "title": "[DEMO] Weekly Payments batch window",
+            "description": "Recurring Sunday maintenance for Payments Gateway PROD.",
+            "expected_impact": "Batch APIs degraded ~2h",
+            "approval_state": "confirmed_scheduled",
+            "starts_at": recur_start,
+            "ends_at": recur_end,
+            "timezone": "America/Chicago",
+            "impacts": [
+                {
+                    "target_type": "application",
+                    "target_id": apps["payments-gateway"].id,
+                    "environment_id": envs["PROD"].id,
+                }
+            ],
+            "recurrence": {
+                "freq": "WEEKLY",
+                "interval": 1,
+                "byweekday": ["SU"],
+                "until": until_local.astimezone(timezone.utc).isoformat(),
+            },
+        },
+        actor_id=publisher.id,
+    )
+    # Cancel the second occurrence (individual scheduled skip)
+    from maintenancehub_api.domain import recurrence as recurrence_service
+
+    occs = recurrence_service.expand_event_occurrences(
+        recurring,
+        range_start=recur_start - timedelta(seconds=1),
+        range_end=recur_start + timedelta(days=21),
+    )
+    if len(occs) >= 2:
+        event_service.exception_for_occurrence(
+            db,
+            recurring,
+            original_starts_at=occs[1].original_starts_at,
+            action="cancel",
+            actor_id=publisher.id,
+        )
+
+    # Approved-window recurring series (not confirmed — reminders should not fire)
+    event_service.create_event(
+        db,
+        data={
+            "kind": "planned_maintenance",
+            "title": "[DEMO] Monthly Inventory DR drill (approved window)",
+            "description": "Recurring approved window — not yet confirmed for communication.",
+            "expected_impact": "DR environment only",
+            "approval_state": "approved_window",
+            "starts_at": (now + timedelta(days=10)).replace(minute=0, second=0, microsecond=0),
+            "ends_at": (now + timedelta(days=10, hours=3)),
+            "timezone": "UTC",
+            "impacts": [
+                {
+                    "target_type": "application",
+                    "target_id": apps["inventory-svc"].id,
+                    "environment_id": envs["PROD"].id,
+                }
+            ],
+            "recurrence": {
+                "freq": "MONTHLY",
+                "interval": 1,
+                "bymonthday": (now + timedelta(days=10)).day,
+                "count": 6,
+            },
+        },
+        actor_id=publisher.id,
+    )

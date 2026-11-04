@@ -20,7 +20,6 @@ export function AboutPage() {
           <li>Application/infra uptime monitoring, synthetics, auto-status from telemetry</li>
           <li>Direct Microsoft Teams APIs or webhooks (use email / Power Automate bridge)</li>
           <li>ServiceNow push/webhooks (poll adapter only; push interface stubbed)</li>
-          <li>Recurrence occurrence expansion in the in-app calendar (M3b partial)</li>
           <li>Digest notification worker (subscription digest_mode is schema-ready)</li>
           <li>Live OIDC token exchange / LDAP bind until IdP endpoints are configured</li>
           <li>Admin screens for ServiceNow unmatched, CSV import, service credentials, audit (API only)</li>

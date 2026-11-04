@@ -23,6 +23,7 @@ class DashboardSummary(BaseModel):
 
 class CalendarEventOut(BaseModel):
     id: str
+    """Stable occurrence id: `{event_id}@{original_starts_at}` for recurring; event id otherwise."""
     title: str
     kind: str
     status: str
@@ -32,6 +33,10 @@ class CalendarEventOut(BaseModel):
     timezone: str
     is_occurrence: bool = False
     occurrence_starts_at: Optional[datetime] = None
+    series_id: Optional[str] = None
+    """Master event id when this row is an expanded occurrence."""
+    phase: str = "scheduled"
+    """approved_window | scheduled | executing | completed | cancelled — human-published only."""
 
 
 class FavoritesPut(BaseModel):

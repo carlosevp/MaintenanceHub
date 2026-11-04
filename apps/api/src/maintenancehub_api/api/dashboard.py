@@ -7,12 +7,15 @@ from sqlalchemy.orm import Session, joinedload
 
 from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, get_current_user
+from maintenancehub_api.domain import communication as comm
+from maintenancehub_api.domain import recurrence as recurrence_service
 from maintenancehub_api.models import (
     Application,
     EventKind,
     EventStatus,
     Favorite,
     MaintenanceEvent,
+    RecurrenceRule,
 )
 from maintenancehub_api.schemas.dashboard import (
     CalendarEventOut,
@@ -21,39 +24,71 @@ from maintenancehub_api.schemas.dashboard import (
     FavoriteOut,
     FavoritesPut,
 )
-from maintenancehub_api.schemas.events import EventOut
+from maintenancehub_api.schemas.events import EventOut, RecurrenceExceptionOut, RecurrenceOut
 
 router = APIRouter(tags=["dashboard"])
-
-ACTIVE_STATUSES = {
-    EventStatus.scheduled,
-    EventStatus.in_progress,
-    EventStatus.extended,
-    EventStatus.verifying,
-}
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def _event_out(e: MaintenanceEvent) -> EventOut:
-    return EventOut.model_validate(e)
+def _recurrence_out(e: MaintenanceEvent) -> RecurrenceOut | None:
+    rule = getattr(e, "recurrence_rule", None)
+    if not rule:
+        return None
+    return RecurrenceOut(
+        rrule=rule.rrule,
+        until_at=rule.until_at,
+        summary=recurrence_service.human_summary(rule.rrule, timezone_name=e.timezone),
+        exceptions=[
+            RecurrenceExceptionOut(
+                id=ex.id,
+                original_starts_at=ex.original_starts_at,
+                action=ex.action,
+                new_starts_at=ex.new_starts_at,
+                new_ends_at=ex.new_ends_at,
+            )
+            for ex in (rule.exceptions or [])
+        ],
+    )
 
 
-@router.get("/dashboard/summary", response_model=DashboardSummary)
-def dashboard_summary(
-    application_id: str | None = None,
-    environment_id: str | None = None,
-    kind: str | None = None,
-    favorites_only: bool = False,
-    limit: int = Query(10, ge=1, le=50),
-    db: Session = Depends(get_db),
-    user: AuthUser = Depends(get_current_user),
-) -> DashboardSummary:
-    now = _now()
-    base = db.query(MaintenanceEvent).options(joinedload(MaintenanceEvent.impacts))
+def _event_out(
+    e: MaintenanceEvent,
+    *,
+    now: datetime,
+    starts_at: datetime | None = None,
+    ends_at: datetime | None = None,
+    occurrence_starts_at: datetime | None = None,
+    is_occurrence: bool = False,
+) -> EventOut:
+    data = EventOut.model_validate(e)
+    data.recurrence = _recurrence_out(e)
+    if starts_at is not None:
+        data.starts_at = starts_at
+    if ends_at is not None:
+        data.ends_at = ends_at
+    data.occurrence_starts_at = occurrence_starts_at
+    data.is_occurrence = is_occurrence
+    data.series_id = e.id if is_occurrence else None
+    data.phase = comm.communication_phase(
+        e,
+        now=now,
+        starts_at=starts_at or e.starts_at,
+        ends_at=ends_at or e.ends_at,
+    )
+    return data
 
+
+def _masters_query(db: Session):
+    return db.query(MaintenanceEvent).options(
+        joinedload(MaintenanceEvent.impacts),
+        joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions),
+    )
+
+
+def _apply_filters(base, *, kind, favorites_only, application_id, environment_id, user, db):
     if kind:
         base = base.filter(MaintenanceEvent.kind == EventKind(kind))
     if favorites_only:
@@ -62,10 +97,7 @@ def dashboard_summary(
             for f in db.query(Favorite).filter(Favorite.user_id == user.id).all()
         ]
         if not fav_ids:
-            empty = DashboardSlice(count=0, items=[])
-            return DashboardSummary(
-                current=empty, upcoming=empty, recent=empty, outages=empty, as_of=now
-            )
+            return None
         from maintenancehub_api.models import EventImpact, ImpactTargetType
 
         base = (
@@ -91,41 +123,94 @@ def dashboard_summary(
         from maintenancehub_api.models import EventImpact
 
         base = base.join(EventImpact).filter(EventImpact.environment_id == environment_id).distinct()
+    return base
 
-    current_q = base.filter(
-        MaintenanceEvent.status.in_(
-            [EventStatus.in_progress, EventStatus.extended, EventStatus.verifying]
-        ),
-        MaintenanceEvent.starts_at <= now,
-        MaintenanceEvent.ends_at >= now,
+
+@router.get("/dashboard/summary", response_model=DashboardSummary)
+def dashboard_summary(
+    application_id: str | None = None,
+    environment_id: str | None = None,
+    kind: str | None = None,
+    favorites_only: bool = False,
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+) -> DashboardSummary:
+    now = _now()
+    horizon = now + timedelta(days=60)
+    empty = DashboardSlice(count=0, items=[])
+    base = _apply_filters(
+        _masters_query(db),
+        kind=kind,
+        favorites_only=favorites_only,
+        application_id=application_id,
+        environment_id=environment_id,
+        user=user,
+        db=db,
     )
-    upcoming_q = base.filter(
-        MaintenanceEvent.status == EventStatus.scheduled,
-        MaintenanceEvent.starts_at > now,
-    )
+    if base is None:
+        return DashboardSummary(
+            current=empty, upcoming=empty, recent=empty, outages=empty, as_of=now
+        )
+
+    candidates = base.filter(MaintenanceEvent.status != EventStatus.cancelled).all()
+
+    current_items: list[EventOut] = []
+    upcoming_items: list[EventOut] = []
+    outage_items: list[EventOut] = []
+
+    window_start = now - timedelta(days=1)
+    window_end = horizon
+
+    for e in candidates:
+        if e.status == EventStatus.completed:
+            continue
+        if not recurrence_service.master_may_intersect_window(
+            e, range_start=window_start, range_end=window_end
+        ):
+            continue
+        occs = recurrence_service.expand_event_occurrences(
+            e, range_start=window_start, range_end=window_end
+        )
+        for occ in occs:
+            item = _event_out(
+                e,
+                now=now,
+                starts_at=occ.starts_at,
+                ends_at=occ.ends_at,
+                occurrence_starts_at=occ.original_starts_at,
+                is_occurrence=bool(e.is_recurring),
+            )
+            # Active outage: manual + confirmed + executing + in window (never approved-only)
+            if comm.is_active_outage(
+                e, now=now, starts_at=occ.starts_at, ends_at=occ.ends_at
+            ):
+                outage_items.append(item)
+            # Current = human-published executing + in window (not approved_window, not merely scheduled)
+            if comm.is_executing_now(
+                e, now=now, starts_at=occ.starts_at, ends_at=occ.ends_at
+            ):
+                current_items.append(item)
+            elif comm.is_upcoming_scheduled(e, now=now, starts_at=occ.starts_at):
+                upcoming_items.append(item)
+
+    current_items.sort(key=lambda x: x.starts_at)
+    upcoming_items.sort(key=lambda x: x.starts_at)
+    outage_items.sort(key=lambda x: x.starts_at)
+
     recent_q = base.filter(
         MaintenanceEvent.status == EventStatus.completed,
         MaintenanceEvent.ends_at >= now - timedelta(days=14),
     )
-    outages_q = base.filter(
-        MaintenanceEvent.kind == EventKind.manual_outage,
-        MaintenanceEvent.status.in_(
-            [EventStatus.in_progress, EventStatus.extended, EventStatus.verifying]
-        ),
-    )
-
-    current_items = current_q.order_by(MaintenanceEvent.starts_at).limit(limit).all()
-    upcoming_items = upcoming_q.order_by(MaintenanceEvent.starts_at).limit(limit).all()
     recent_items = recent_q.order_by(MaintenanceEvent.ends_at.desc()).limit(limit).all()
-    outage_items = outages_q.order_by(MaintenanceEvent.starts_at).limit(limit).all()
 
     return DashboardSummary(
-        current=DashboardSlice(count=current_q.count(), items=[_event_out(e) for e in current_items]),
-        upcoming=DashboardSlice(
-            count=upcoming_q.count(), items=[_event_out(e) for e in upcoming_items]
+        current=DashboardSlice(count=len(current_items), items=current_items[:limit]),
+        upcoming=DashboardSlice(count=len(upcoming_items), items=upcoming_items[:limit]),
+        recent=DashboardSlice(
+            count=recent_q.count(), items=[_event_out(e, now=now) for e in recent_items]
         ),
-        recent=DashboardSlice(count=recent_q.count(), items=[_event_out(e) for e in recent_items]),
-        outages=DashboardSlice(count=outages_q.count(), items=[_event_out(e) for e in outage_items]),
+        outages=DashboardSlice(count=len(outage_items), items=outage_items[:limit]),
         as_of=now,
     )
 
@@ -150,11 +235,7 @@ def calendar_events(
         else:
             to = from_ + timedelta(days=31)
 
-    query = db.query(MaintenanceEvent).filter(
-        MaintenanceEvent.starts_at <= to,
-        MaintenanceEvent.ends_at >= from_,
-        MaintenanceEvent.status != EventStatus.cancelled,
-    )
+    query = _masters_query(db).filter(MaintenanceEvent.status != EventStatus.cancelled)
     if application_id:
         from maintenancehub_api.models import EventImpact, ImpactTargetType
 
@@ -167,22 +248,42 @@ def calendar_events(
             .distinct()
         )
 
-    events = query.order_by(MaintenanceEvent.starts_at).all()
-    # M3b: recurrence expansion incomplete — return master events only
-    return [
-        CalendarEventOut(
-            id=e.id,
-            title=e.title,
-            kind=e.kind.value,
-            status=e.status.value,
-            approval_state=e.approval_state.value,
-            starts_at=e.starts_at,
-            ends_at=e.ends_at,
-            timezone=e.timezone,
-            is_occurrence=False,
-        )
-        for e in events
+    # Pre-filter: skip masters that cannot intersect the visible window
+    events = [
+        e
+        for e in query.order_by(MaintenanceEvent.starts_at).all()
+        if recurrence_service.master_may_intersect_window(e, range_start=from_, range_end=to)
     ]
+    out: list[CalendarEventOut] = []
+    for e in events:
+        for occ in recurrence_service.expand_event_occurrences(
+            e, range_start=from_, range_end=to
+        ):
+            phase = comm.communication_phase(
+                e, now=now, starts_at=occ.starts_at, ends_at=occ.ends_at
+            )
+            out.append(
+                CalendarEventOut(
+                    id=(
+                        recurrence_service.occurrence_id_for(e.id, occ.original_starts_at)
+                        if e.is_recurring
+                        else e.id
+                    ),
+                    title=e.title,
+                    kind=e.kind.value,
+                    status=e.status.value,
+                    approval_state=e.approval_state.value,
+                    starts_at=occ.starts_at,
+                    ends_at=occ.ends_at,
+                    timezone=e.timezone,
+                    is_occurrence=bool(e.is_recurring),
+                    occurrence_starts_at=occ.original_starts_at if e.is_recurring else None,
+                    series_id=e.id if e.is_recurring else None,
+                    phase=phase,
+                )
+            )
+    out.sort(key=lambda x: x.starts_at)
+    return out
 
 
 @router.get("/me/favorites", response_model=FavoriteOut)
