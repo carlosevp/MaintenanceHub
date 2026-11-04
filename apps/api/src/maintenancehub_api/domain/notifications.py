@@ -16,9 +16,7 @@ from maintenancehub_api.domain.templates import DEFAULT_TEMPLATES, render_templa
 from maintenancehub_api.models import (
     ApprovalState,
     DeliveryStatus,
-    EventImpact,
     EventStatus,
-    ImpactTargetType,
     Job,
     JobStatus,
     MaintenanceEvent,
@@ -84,17 +82,61 @@ def event_context(event: MaintenanceEvent, extra: dict[str, Any] | None = None) 
     return ctx
 
 
-def matching_subscriptions(db: Session, event: MaintenanceEvent) -> list[Subscription]:
-    """Find active subscriptions whose targets intersect this event's impacts."""
-    impacts = (
-        db.query(EventImpact).filter(EventImpact.event_id == event.id).all()
-        if not event.impacts
-        else list(event.impacts)
+def _subscription_matches_impacts(
+    sub: Subscription,
+    *,
+    event_id: str,
+    impacts: list,
+) -> bool:
+    """True if any target of ``sub`` matches the effective impact set.
+
+    ``app_environment`` targets match an exact (application, environment) pair on
+    the same impact row — never independent app/env ID sets.
+    """
+    from maintenancehub_api.domain.impacts import (
+        ImpactRef,
+        app_env_pairs,
+        application_ids,
+        environment_ids,
     )
-    app_ids = {
-        i.target_id for i in impacts if i.target_type == ImpactTargetType.application
-    }
-    env_ids = {i.environment_id for i in impacts if i.environment_id}
+
+    refs: list[ImpactRef] = list(impacts)
+    apps = application_ids(refs)
+    envs = environment_ids(refs)
+    pairs = app_env_pairs(refs)
+
+    for t in sub.targets:
+        if t.target_type == "event" and t.target_id == event_id:
+            return True
+        if t.target_type == "application" and t.target_id in apps:
+            return True
+        if t.target_type == "environment" and t.target_id in envs:
+            return True
+        if t.target_type == "app_environment":
+            if ":" in t.target_id:
+                a, e = t.target_id.split(":", 1)
+                if (a, e) in pairs:
+                    return True
+        # support_group targeting deferred
+    return False
+
+
+def matching_subscriptions(
+    db: Session,
+    event: MaintenanceEvent,
+    *,
+    record: Any | None = None,
+    impacts: list | None = None,
+) -> list[Subscription]:
+    """Find active subscriptions intersecting effective impacts (deduped by sub id).
+
+    Pass an occurrence ``record`` (or precomputed ``impacts`` ImpactRef list) so
+    overridden occurrence impacts — including an explicit empty set — drive matching.
+    """
+    from maintenancehub_api.domain.impacts import effective_impacts
+
+    if impacts is None:
+        impacts = effective_impacts(event, record)
 
     subs = (
         db.query(Subscription)
@@ -106,27 +148,13 @@ def matching_subscriptions(db: Session, event: MaintenanceEvent) -> list[Subscri
         .all()
     )
     matched: list[Subscription] = []
+    seen: set[str] = set()
     for sub in subs:
-        for t in sub.targets:
-            if t.target_type == "event" and t.target_id == event.id:
-                matched.append(sub)
-                break
-            if t.target_type == "application" and t.target_id in app_ids:
-                matched.append(sub)
-                break
-            if t.target_type == "environment" and t.target_id in env_ids:
-                matched.append(sub)
-                break
-            if t.target_type == "app_environment":
-                # target_id encodes "app_id:env_id" or we match loosely
-                if ":" in t.target_id:
-                    a, e = t.target_id.split(":", 1)
-                    if a in app_ids and e in env_ids:
-                        matched.append(sub)
-                        break
-            if t.target_type == "support_group":
-                # Group targeting deferred detail — match none unless linked later
-                continue
+        if sub.id in seen:
+            continue
+        if _subscription_matches_impacts(sub, event_id=event.id, impacts=impacts):
+            seen.add(sub.id)
+            matched.append(sub)
     return matched
 
 
@@ -189,13 +217,29 @@ def enqueue_deliveries_for_event(
     template_key: str,
     extra_context: dict[str, Any] | None = None,
     reason: str = "lifecycle",
+    record: Any | None = None,
 ) -> int:
     """Create pending deliveries for matching subscriptions. Skip unconfirmed approved_window
     for broadcast lifecycle (confirmed_scheduled only), except explicit reminders of confirmed.
+
+    When ``record`` / ``orig_key`` identify an occurrence, matching uses that occurrence's
+    effective impacts (override or series defaults). Eligibility is re-checked here so
+    stale outbox jobs do not notify subscribers who no longer match; sent history is kept.
     """
     if event.approval_state == ApprovalState.approved_window and reason != "force":
         logger.info("Skipping notify for approved_window event %s", event.id)
         return 0
+
+    # Resolve occurrence record from orig_key when not provided
+    if record is None and extra_context and extra_context.get("orig_key"):
+        from maintenancehub_api.domain import occurrences as occurrence_service
+        from maintenancehub_api.domain.recurrence import parse_occurrence_id
+
+        orig_key = str(extra_context["orig_key"])
+        if orig_key != "master":
+            parsed = parse_occurrence_id(f"{event.id}@{orig_key}")
+            if parsed:
+                record = occurrence_service.find_record(db, event.id, parsed[1])
 
     subject_t, body_t = get_template(db, template_key)
     ctx = event_context(event, extra_context)
@@ -203,7 +247,7 @@ def enqueue_deliveries_for_event(
     body = render_template(body_t, ctx)
 
     created = 0
-    for sub in matching_subscriptions(db, event):
+    for sub in matching_subscriptions(db, event, record=record):
         if sub.destination_type == "teams_bridge_channel":
             channel = "bridge"
             dest = sub.destination
@@ -339,41 +383,64 @@ def schedule_reminders_for_event(db: Session, event: MaintenanceEvent) -> int:
             include_cancelled=True,
         )
 
+    from maintenancehub_api.domain import occurrences as occurrence_service
+    from maintenancehub_api.domain.impacts import effective_impacts
+
+    # Load all active subs once; filter per occurrence by effective impacts
+    all_subs = (
+        db.query(Subscription)
+        .options(
+            joinedload(Subscription.targets),
+            joinedload(Subscription.reminders),
+        )
+        .filter(Subscription.is_active.is_(True))
+        .all()
+    )
+
     count = 0
-    for sub in matching_subscriptions(db, event):
-        for rem in sub.reminders:
-            for occ in occs:
+    for occ in occs:
+        occ_rec = occurrence_service.find_record(db, event.id, occ.original_starts_at)
+        occ_status = occurrence_service.effective_status(
+            event,
+            original_starts_at=occ.original_starts_at,
+            record=occ_rec,
+            cancelled_exception=occ.cancelled,
+        )
+        if occ.cancelled or occ_status in {
+            EventStatus.cancelled,
+            EventStatus.completed,
+        }:
+            cancel_reminder_jobs_for_occurrence(
+                db, event_id=event.id, original_starts_at=occ.original_starts_at
+            )
+            continue
+
+        eff_impacts = effective_impacts(event, occ_rec)
+        matched_subs = [
+            s
+            for s in all_subs
+            if _subscription_matches_impacts(s, event_id=event.id, impacts=eff_impacts)
+        ]
+        # Dead-letter queued reminders for subscribers who no longer match this occ
+        reconcile_queued_reminders_for_occurrence(
+            db,
+            event_id=event.id,
+            original_starts_at=occ.original_starts_at,
+            eligible_subscription_ids={s.id for s in matched_subs},
+        )
+
+        eff_starts, _eff_ends = occurrence_service.effective_times(occ, occ_rec)
+        for sub in matched_subs:
+            for rem in sub.reminders:
                 key = _reminder_job_key(
                     event.id, occ.original_starts_at, sub.id, rem.offset_minutes
                 )
-                # Honour sparse occurrence lifecycle cancel / terminal states
-                from maintenancehub_api.domain import occurrences as occurrence_service
-
-                occ_rec = occurrence_service.find_record(
-                    db, event.id, occ.original_starts_at
-                )
-                occ_status = occurrence_service.effective_status(
-                    event,
-                    original_starts_at=occ.original_starts_at,
-                    record=occ_rec,
-                    cancelled_exception=occ.cancelled,
-                )
-                if occ.cancelled or occ_status in {
-                    EventStatus.cancelled,
-                    EventStatus.completed,
-                }:
-                    cancel_reminder_jobs_for_occurrence(
-                        db, event_id=event.id, original_starts_at=occ.original_starts_at
-                    )
-                    continue
-                eff_starts, _eff_ends = occurrence_service.effective_times(occ, occ_rec)
                 run_at = eff_starts + timedelta(minutes=rem.offset_minutes)
-                # Skip enqueue if reminder time already passed significantly (avoid storm on restart)
+                # Skip enqueue if reminder time already passed significantly
                 if run_at < now - timedelta(minutes=5):
                     continue
                 existing = db.query(Job).filter(Job.idempotency_key == key).first()
                 if existing:
-                    # Never recreate after success / terminal; only retarget still-queued
                     if existing.status == JobStatus.queued and existing.run_at != run_at:
                         existing.run_at = run_at
                         existing.payload = {
@@ -383,7 +450,6 @@ def schedule_reminders_for_event(db: Session, event: MaintenanceEvent) -> int:
                         }
                         count += 1
                     continue
-                # Also skip if delivery already recorded for this occurrence reminder
                 delivery_key = (
                     f"event:{event.id}:event.reminder:orig:"
                     f"{occ.original_starts_at.strftime('%Y%m%dT%H%M%SZ')}:"
@@ -420,13 +486,45 @@ def schedule_reminders_for_event(db: Session, event: MaintenanceEvent) -> int:
                         db.flush()
                     count += 1
                 except IntegrityError:
-                    # Concurrent worker inserted same key — idempotent success
                     continue
     try:
         db.commit()
     except IntegrityError:
         db.rollback()
     return count
+
+
+def reconcile_queued_reminders_for_occurrence(
+    db: Session,
+    *,
+    event_id: str,
+    original_starts_at: datetime,
+    eligible_subscription_ids: set[str],
+) -> int:
+    """Dead-letter queued reminders whose subscription no longer matches this occurrence.
+
+    Sent / succeeded deliveries are never deleted or rewritten.
+    """
+    orig_key = ensure_utc(original_starts_at).strftime("%Y%m%dT%H%M%SZ")
+    prefix = f"reminder:event:{event_id}:orig:{orig_key}:"
+    rows = (
+        db.query(Job)
+        .filter(
+            Job.job_type == "notify_reminder",
+            Job.status == JobStatus.queued,
+            Job.idempotency_key.isnot(None),
+            Job.idempotency_key.like(f"{prefix}%"),
+        )
+        .all()
+    )
+    n = 0
+    for job in rows:
+        sub_id = (job.payload or {}).get("subscription_id")
+        if sub_id and sub_id not in eligible_subscription_ids:
+            job.status = JobStatus.dead
+            job.last_error = "occurrence_impacts_no_longer_match"
+            n += 1
+    return n
 
 
 def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
@@ -498,7 +596,15 @@ def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, A
 
 def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
     event = db.get(MaintenanceEvent, payload["event_id"])
-    sub = db.get(Subscription, payload["subscription_id"])
+    sub = (
+        db.query(Subscription)
+        .options(
+            joinedload(Subscription.targets),
+            joinedload(Subscription.reminders),
+        )
+        .filter(Subscription.id == payload["subscription_id"])
+        .first()
+    )
     if not event or not sub or not sub.is_active:
         return {"skipped": True}
     # Never notify for approved-only windows or terminal series
@@ -509,6 +615,7 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
 
     # Skip if this occurrence was cancelled after the job was queued
     orig = payload.get("original_starts_at")
+    occ_rec = None
     if orig and event.is_recurring:
         from maintenancehub_api.domain import recurrence as recurrence_service
         from maintenancehub_api.models import RecurrenceRule
@@ -516,7 +623,8 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
         event = (
             db.query(MaintenanceEvent)
             .options(
-                joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions)
+                joinedload(MaintenanceEvent.impacts),
+                joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions),
             )
             .filter(MaintenanceEvent.id == event.id)
             .first()
@@ -529,6 +637,7 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
             include_cancelled=True,
         )
         from maintenancehub_api.domain import occurrences as occurrence_service
+        from maintenancehub_api.domain.impacts import effective_impacts
 
         occ_rec = occurrence_service.find_record(db, event.id, orig_dt)
         if any(o.cancelled for o in occs) or (
@@ -539,6 +648,11 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
                 db, event_id=event.id, original_starts_at=orig_dt
             )
             return {"skipped": True, "reason": "occurrence_cancelled"}
+        # Eligibility: impacts may have changed since the job was queued
+        if not _subscription_matches_impacts(
+            sub, event_id=event.id, impacts=effective_impacts(event, occ_rec)
+        ):
+            return {"skipped": True, "reason": "impacts_no_longer_match"}
         # Prefer effective (possibly rescheduled) start for template context
         live = next((o for o in occs if not o.cancelled), None)
         if live:
@@ -547,6 +661,13 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
                 **payload,
                 "occurrence_starts_at": eff_starts.isoformat(),
             }
+    elif not event.is_recurring:
+        from maintenancehub_api.domain.impacts import effective_impacts
+
+        if not _subscription_matches_impacts(
+            sub, event_id=event.id, impacts=effective_impacts(event, None)
+        ):
+            return {"skipped": True, "reason": "impacts_no_longer_match"}
 
     offset = int(payload["offset_minutes"])
     label = f"{abs(offset)}m before start" if offset < 0 else f"{offset}m after start"

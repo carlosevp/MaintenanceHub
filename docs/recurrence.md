@@ -53,6 +53,9 @@ Dashboard **current** = executing + in window. **Outages** = confirmed manual ou
 - Horizon: next 45 days only
 - Job key: `reminder:event:{id}:orig:{original}:sub:{sub}:offset:{n}`
 - Lifecycle delivery key includes `orig:{original}` so two occurrences of the same series notify independently
+- **Effective impacts** (shared resolver): occurrence override when set (empty allowed); else series defaults
+- Subscription match: `application` / `environment` / exact `app_environment` **pairs** / `event` (deduped). Independent app∩env set matching is rejected
 - Cancelled / completed occurrences → queued reminder jobs marked `dead`; already-sent deliveries are immutable
+- Impact override changes reconcile queued reminders for that occurrence; dispatch re-checks eligibility
 - Reschedule updates pending reminder `run_at` without duplicating keys
 - Concurrent workers cannot double-claim (unique idempotency + lease)

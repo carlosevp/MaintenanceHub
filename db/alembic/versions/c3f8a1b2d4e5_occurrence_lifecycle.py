@@ -52,7 +52,12 @@ def upgrade() -> None:
         sa.Column("actual_ends_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("expected_impact", sa.Text(), nullable=True),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("impacts_overridden", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column(
+            "impacts_overridden",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.false(),
+        ),
         sa.Column("updated_by", sa.String(length=36), nullable=True),
         sa.Column(
             "created_at",

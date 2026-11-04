@@ -227,7 +227,7 @@ def occurrence_to_dict(
         if record and record.expected_impact is not None
         else event.expected_impact
     )
-    impacts: list[dict[str, Any]]
+    # DTO impacts == effective set (override including empty, else series defaults)
     if record and record.impacts_overridden:
         impacts = [
             {
@@ -496,10 +496,6 @@ def patch_occurrence(
                 new_starts_at=starts,
                 new_ends_at=ends,
             )
-            from maintenancehub_api.domain.notifications import schedule_reminders_for_event
-
-            # Pending reminders retarget via schedule (idempotent keys)
-            schedule_reminders_for_event(db, event)
         elif not event.is_recurring:
             event.starts_at = starts
             event.ends_at = ends
@@ -511,12 +507,15 @@ def patch_occurrence(
         record.description = description
         changes["description"] = description
 
+    impacts_changed = False
     if clear_impact_override:
         record.impacts_overridden = False
         for row in list(record.impacts or []):
             db.delete(row)
         changes["impacts_overridden"] = False
+        impacts_changed = True
     elif impacts is not None:
+        # Explicit list — including [] — replaces series defaults for this occurrence
         record.impacts_overridden = True
         for row in list(record.impacts or []):
             db.delete(row)
@@ -532,6 +531,7 @@ def patch_occurrence(
             )
         changes["impacts_overridden"] = True
         changes["impacts"] = impacts
+        impacts_changed = True
 
     record.updated_by = actor_id
     db.add(
@@ -562,6 +562,12 @@ def patch_occurrence(
                 "ends_at": changes.get("expected_ends_at"),
             },
         )
+    db.flush()
+    if impacts_changed or "expected_starts_at" in changes:
+        from maintenancehub_api.domain.notifications import schedule_reminders_for_event
+
+        # Retarget / dead-letter queued reminders; never rewrite sent deliveries
+        schedule_reminders_for_event(db, event)
     db.commit()
     refreshed = find_record(db, event.id, occ.original_starts_at)
     assert refreshed is not None
@@ -929,14 +935,6 @@ def impact_app_ids_for_occurrence(
     event: MaintenanceEvent,
     record: OccurrenceRecord | None,
 ) -> set[str]:
-    if record and record.impacts_overridden:
-        return {
-            i.target_id
-            for i in (record.impacts or [])
-            if i.target_type == ImpactTargetType.application
-        }
-    return {
-        i.target_id
-        for i in (event.impacts or [])
-        if i.target_type == ImpactTargetType.application
-    }
+    from maintenancehub_api.domain.impacts import application_ids, effective_impacts
+
+    return application_ids(effective_impacts(event, record))

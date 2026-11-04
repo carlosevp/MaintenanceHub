@@ -524,6 +524,7 @@ class OccurrenceRecord(Base):
     __table_args__ = (
         UniqueConstraint("event_id", "original_starts_at", name="uq_occurrence_identity"),
         Index("ix_occurrence_event_status", "event_id", "status"),
+        Index("ix_occurrence_records_original_starts_at", "original_starts_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
@@ -578,6 +579,7 @@ class OccurrenceImpact(Base):
             "environment_id",
             name="uq_occurrence_impact",
         ),
+        Index("ix_occurrence_impacts_target", "target_type", "target_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)

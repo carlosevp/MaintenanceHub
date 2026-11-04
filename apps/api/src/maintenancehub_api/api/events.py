@@ -11,8 +11,18 @@ from maintenancehub_api.domain import communication as comm
 from maintenancehub_api.domain import events as event_service
 from maintenancehub_api.domain import occurrences as occurrence_service
 from maintenancehub_api.domain import recurrence as recurrence_service
-from maintenancehub_api.domain.authz import ensure_app_grants
-from maintenancehub_api.models import EventStatus, ImpactTargetType
+from maintenancehub_api.domain.authz import (
+    ensure_app_grants,
+    ensure_impact_mutation,
+    ensure_lifecycle_access,
+)
+from maintenancehub_api.domain.impacts import (
+    application_ids,
+    effective_impacts,
+    impacts_from_dicts,
+    series_impacts,
+)
+from maintenancehub_api.models import EventStatus
 from maintenancehub_api.schemas.events import (
     CancelRequest,
     EventCreate,
@@ -91,15 +101,11 @@ def preview_recurrence(
 
 
 def _impact_app_ids(event) -> set[str]:  # noqa: ANN001
-    return {
-        i.target_id
-        for i in (event.impacts or [])
-        if i.target_type == ImpactTargetType.application
-    }
+    return application_ids(series_impacts(event))
 
 
 def _require_event_grant(db, user: AuthUser, event) -> None:  # noqa: ANN001
-    ensure_app_grants(db, user, _impact_app_ids(event), action="mutate event")
+    ensure_lifecycle_access(db, user, event, record=None, action="mutate event")
 
 
 @router.get("", response_model=list[EventOut])
@@ -362,12 +368,7 @@ def occurrence_transition(
         raise HTTPException(status_code=404, detail="Event not found")
     orig = _resolve_orig(body.occurrence_id, body.original_starts_at, event_id)
     _, record = occurrence_service.resolve_occurrence(db, event, original_starts_at=orig)
-    ensure_app_grants(
-        db,
-        user,
-        occurrence_service.impact_app_ids_for_occurrence(event, record),
-        action="mutate occurrence",
-    )
+    ensure_lifecycle_access(db, user, event, record, action="lifecycle occurrence")
     try:
         occurrence_service.transition_occurrence(
             db,
@@ -399,12 +400,7 @@ def occurrence_extend(
         raise HTTPException(status_code=404, detail="Event not found")
     orig = _resolve_orig(body.occurrence_id, body.original_starts_at, event_id)
     _, record = occurrence_service.resolve_occurrence(db, event, original_starts_at=orig)
-    ensure_app_grants(
-        db,
-        user,
-        occurrence_service.impact_app_ids_for_occurrence(event, record),
-        action="mutate occurrence",
-    )
+    ensure_lifecycle_access(db, user, event, record, action="extend occurrence")
     try:
         occurrence_service.extend_occurrence(
             db,
@@ -435,12 +431,19 @@ def occurrence_patch(
         raise HTTPException(status_code=404, detail="Event not found")
     orig = _resolve_orig(body.occurrence_id, body.original_starts_at, event_id)
     _, record = occurrence_service.resolve_occurrence(db, event, original_starts_at=orig)
-    ensure_app_grants(
-        db,
-        user,
-        occurrence_service.impact_app_ids_for_occurrence(event, record),
-        action="mutate occurrence",
-    )
+    prior = effective_impacts(event, record)
+    if body.impacts is not None or body.clear_impact_override:
+        if body.clear_impact_override:
+            next_imps = series_impacts(event)
+        else:
+            next_imps = impacts_from_dicts(
+                [i.model_dump() for i in (body.impacts or [])]
+            )
+        ensure_impact_mutation(
+            db, user, prior_impacts=prior, next_impacts=next_imps, action="change occurrence impacts"
+        )
+    else:
+        ensure_lifecycle_access(db, user, event, record, action="patch occurrence")
     try:
         occurrence_service.patch_occurrence(
             db,
@@ -477,12 +480,7 @@ def occurrence_cancel_lifecycle(
         raise HTTPException(status_code=404, detail="Event not found")
     orig = _resolve_orig(body.occurrence_id, body.original_starts_at, event_id)
     _, record = occurrence_service.resolve_occurrence(db, event, original_starts_at=orig)
-    ensure_app_grants(
-        db,
-        user,
-        occurrence_service.impact_app_ids_for_occurrence(event, record),
-        action="mutate occurrence",
-    )
+    ensure_lifecycle_access(db, user, event, record, action="cancel occurrence")
     try:
         occurrence_service.cancel_occurrence(
             db, event, original_starts_at=orig, actor_id=user.id, note=body.note

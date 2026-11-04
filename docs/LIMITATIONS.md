@@ -24,6 +24,8 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 - **`this_and_future` split:** Historical data stays on the truncated master; the new series gets a new event id (subscriptions targeting the old event id are not auto-rewired — app-targeted subscriptions still match via impacts).
 - **Dashboard “current”:** Only human-published **executing** statuses in-window (per occurrence when a sparse record exists). A confirmed series still in master `scheduled` that overlaps now is **not** treated as executing unless that occurrence was started. Approved windows never appear as current/outage and do not send reminders.
 - **Per-occurrence lifecycle:** Sparse `occurrence_records` persist only for overrides/state/audit (no unbounded materialization). Recurring masters typically stay `scheduled`; Start/Extend/Verifying/Complete/Cancel are per-occurrence APIs. Clock time never auto-completes.
+- **Occurrence notification targeting:** Effective impacts = occurrence override when `impacts_overridden` (including an explicit empty set); otherwise series defaults. `app_environment` subscriptions match **(application, environment) pairs** on the same impact row — not independent app/env ID sets. Event-level subscriptions match once (deduped). Impact changes reconcile queued reminders; sent delivery history is immutable. Lifecycle still requires grants on every *effective* impacted application (proposing a downstream app without a grant is allowed on patch, but lifecycle of that occurrence then needs grants on all effective apps).
+- **Support-group subscription targets:** Still non-matching (deferred).
 
 ## Permanent non-goals
 
