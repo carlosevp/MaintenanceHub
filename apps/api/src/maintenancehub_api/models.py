@@ -530,6 +530,95 @@ class Favorite(Base):
     user: Mapped[User] = relationship(back_populates="favorites")
 
 
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    digest_mode: Mapped[str] = mapped_column(String(32), default="none", nullable=False)
+    # email_address | teams_bridge_channel
+    destination_type: Mapped[str] = mapped_column(String(64), default="email_address", nullable=False)
+    destination: Mapped[str] = mapped_column(String(320), nullable=False)
+    # For teams_bridge_channel: routing key embedded in subject
+    bridge_channel_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    targets: Mapped[list[SubscriptionTarget]] = relationship(
+        back_populates="subscription", cascade="all, delete-orphan"
+    )
+    reminders: Mapped[list[ReminderOffset]] = relationship(
+        back_populates="subscription", cascade="all, delete-orphan"
+    )
+
+
+class SubscriptionTarget(Base):
+    __tablename__ = "subscription_targets"
+    __table_args__ = (
+        UniqueConstraint("subscription_id", "target_type", "target_id", name="uq_sub_target"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    subscription_id: Mapped[str] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # application | environment | support_group | event | app_environment
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+
+    subscription: Mapped[Subscription] = relationship(back_populates="targets")
+
+
+class ReminderOffset(Base):
+    __tablename__ = "reminder_offsets"
+    __table_args__ = (
+        UniqueConstraint("subscription_id", "offset_minutes", name="uq_reminder_offset"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    subscription_id: Mapped[str] = mapped_column(
+        ForeignKey("subscriptions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Negative = before start (e.g. -1440 = 24h before)
+    offset_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    subscription: Mapped[Subscription] = relationship(back_populates="reminders")
+
+
+class NotificationTemplate(Base):
+    __tablename__ = "notification_templates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    channel: Mapped[str] = mapped_column(String(32), default="smtp", nullable=False)
+    subject_template: Mapped[str] = mapped_column(Text, nullable=False)
+    body_template: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class CalendarToken(Base):
+    __tablename__ = "calendar_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    # scopes: favorites | subscriptions | all (JSON list)
+    scopes: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
+    label: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class Job(Base):
     __tablename__ = "jobs"
     __table_args__ = (
@@ -578,8 +667,15 @@ class NotificationDelivery(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     idempotency_key: Mapped[str] = mapped_column(String(400), nullable=False)
-    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)  # smtp | bridge | log
+    destination_type: Mapped[str] = mapped_column(
+        String(64), default="email_address", nullable=False
+    )
     destination: Mapped[str] = mapped_column(String(320), nullable=False)
+    subject: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    event_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    subscription_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     status: Mapped[DeliveryStatus] = mapped_column(
         Enum(DeliveryStatus, name="delivery_status"),
         default=DeliveryStatus.pending,

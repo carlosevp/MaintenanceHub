@@ -8,13 +8,17 @@ from sqlalchemy.orm import Session
 
 from maintenancehub_api.auth.security import hash_password
 from maintenancehub_api.domain import events as event_service
+from maintenancehub_api.domain.notifications import ensure_default_templates
 from maintenancehub_api.models import (
     AppEnvironment,
     Application,
     EventStatus,
     Environment,
+    ReminderOffset,
     Role,
     RoleName,
+    Subscription,
+    SubscriptionTarget,
     SupportGroup,
     User,
     UserRole,
@@ -123,6 +127,57 @@ def seed_demo(db: Session) -> None:
 
     db.commit()
 
+    ensure_default_templates(db)
+
+    publisher = users["publisher@demo.example.com"]
+    # Demo subscription: Payments app, -24h and -1h reminders (SMTP log sink)
+    sub = (
+        db.query(Subscription)
+        .filter(
+            Subscription.user_id == publisher.id,
+            Subscription.destination == "publisher@demo.example.com",
+        )
+        .first()
+    )
+    if not sub:
+        sub = Subscription(
+            user_id=publisher.id,
+            destination_type="email_address",
+            destination="publisher@demo.example.com",
+            digest_mode="none",
+            is_active=True,
+        )
+        db.add(sub)
+        db.flush()
+        db.add(
+            SubscriptionTarget(
+                subscription_id=sub.id,
+                target_type="application",
+                target_id=apps["payments-gateway"].id,
+            )
+        )
+        for offset in (-1440, -60):
+            db.add(ReminderOffset(subscription_id=sub.id, offset_minutes=offset))
+        # Teams via email bridge example destination
+        bridge_sub = Subscription(
+            user_id=publisher.id,
+            destination_type="teams_bridge_channel",
+            destination="bridge-mailbox@example.com",
+            bridge_channel_key="ops-payments",
+            digest_mode="none",
+            is_active=True,
+        )
+        db.add(bridge_sub)
+        db.flush()
+        db.add(
+            SubscriptionTarget(
+                subscription_id=bridge_sub.id,
+                target_type="application",
+                target_id=apps["payments-gateway"].id,
+            )
+        )
+        db.commit()
+
     from maintenancehub_api.models import MaintenanceEvent
 
     # Demo events — only if none exist yet
@@ -135,7 +190,6 @@ def seed_demo(db: Session) -> None:
         return
 
     now = datetime.now(timezone.utc)
-    publisher = users["publisher@demo.example.com"]
 
     # Current in-progress maintenance
     event_service.create_event(

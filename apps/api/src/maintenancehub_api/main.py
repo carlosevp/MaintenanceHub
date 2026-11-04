@@ -12,10 +12,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from maintenancehub_api.api import auth, catalog, dashboard, events, health
+from maintenancehub_api.api import (
+    admin_jobs,
+    auth,
+    calendar_tokens,
+    catalog,
+    dashboard,
+    events,
+    health,
+    notifications,
+    subscriptions,
+)
 from maintenancehub_api.config import get_settings
 from maintenancehub_api.db import Base, SessionLocal, engine
 from maintenancehub_api import models as _models  # noqa: F401 — register models on Base.metadata
+from maintenancehub_api.domain.notifications import ensure_default_templates
 from maintenancehub_api.seed import seed_demo
 
 logger = logging.getLogger("maintenancehub")
@@ -37,13 +48,14 @@ async def lifespan(_app: FastAPI):
     _ensure_sqlite_dir()
     # Dev convenience: create tables if migrations not yet applied
     Base.metadata.create_all(bind=engine)
-    if settings.seed_demo_data and settings.auth_mode == "local_dev":
-        db = SessionLocal()
-        try:
+    db = SessionLocal()
+    try:
+        ensure_default_templates(db)
+        if settings.seed_demo_data and settings.auth_mode == "local_dev":
             seed_demo(db)
             logger.info("Demo data seeded (local_dev)")
-        finally:
-            db.close()
+    finally:
+        db.close()
     yield
 
 
@@ -99,6 +111,10 @@ def create_app() -> FastAPI:
     app.include_router(catalog.router, prefix="/api/v1")
     app.include_router(events.router, prefix="/api/v1")
     app.include_router(dashboard.router, prefix="/api/v1")
+    app.include_router(subscriptions.router, prefix="/api/v1")
+    app.include_router(notifications.router, prefix="/api/v1")
+    app.include_router(admin_jobs.router, prefix="/api/v1")
+    app.include_router(calendar_tokens.router, prefix="/api/v1")
 
     return app
 

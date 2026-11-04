@@ -1,27 +1,28 @@
-# Limitations & incomplete capabilities (M0–M4 slice)
+# Limitations & incomplete capabilities
 
 This document lists what is **explicitly incomplete or deferred**. Nothing listed here is “fake finished.”
 
-## Incomplete in this PR
+## Current wave (through M8)
 
 | Item | Status |
 |------|--------|
-| **M3b Recurrence** | Schema (`recurrence_rules`, `recurrence_exceptions`) exists. Create may flag `is_recurring` if a recurrence object is sent, but **RRULE expansion, exceptions, and DST fixtures are not implemented**. Calendar returns master events only. |
-| **M5 Durable jobs** | Outbox + `jobs` rows are written on event transitions. Worker process is a **stub** that logs queue depth and does not claim/lease/execute jobs. |
-| **Subscriptions / SMTP / Power Automate bridge** | Not implemented (M6–M7). Feature flags default off. |
-| **ICS calendar feeds** | Not implemented (M8). |
-| **ServiceNow poll / CMDB CSV** | Not implemented (M9–M10). Adapters disabled. |
+| **M3b Recurrence** | Schema exists; RRULE is emitted in ICS when present, but **occurrence expansion / DST fixtures for in-app calendar are incomplete**. |
+| **M5 Durable jobs** | **Implemented**: outbox drain → leased jobs → handlers; SQLite single-worker; Postgres SKIP LOCKED path. Digests as job type not fully wired. |
+| **M6 Subscriptions + SMTP** | **Implemented**: subscriptions, reminders, templates, log/SMTP sink, delivery history, dedupe. Optional digests are schema-only (`digest_mode`); digest worker not shipped. |
+| **M7 Power Automate bridge** | **Implemented**: `teams_bridge_channel` destinations, subject routing template, connection test. No Teams SDK. |
+| **M8 ICS feeds** | **Implemented**: revocable tokens, favorites/subscriptions scope, Outlook-oriented VCALENDAR. Full VTIMEZONE blocks / complex EXDATE suites are minimal (UTC DTSTART/DTEND + TZ hint). |
+| **ServiceNow poll / CMDB CSV** | Not implemented (M9–M10). |
 | **Enterprise OIDC/LDAP** | Provider hooks via `AUTH_MODE`; only `local_dev` login works. Fail-closed startup guard is implemented. |
-| **Banner package** | Stub package under `packages/banner` (M12). |
+| **Banner package** | Stub under `packages/banner` (M12). |
 | **OpenShift manifests** | Minimal placeholders under `deploy/openshift/`. |
-| **Application-scoped grants enforcement** | Grants table exists; publishers currently write globally in this slice (full grant checks → M11). |
+| **Application-scoped grants enforcement** | Grants table exists; full grant checks → M11. |
 
 ## Permanent non-goals
 
 - Application/infra health monitoring, synthetics, metrics, auto-status from telemetry
-- Direct Microsoft Teams API / webhooks (use email bridge later)
+- Direct Microsoft Teams API / webhooks (**Teams via email bridge only**)
 - `/healthz` and `/readyz` are **platform probes for MaintenanceHub pods only**
 
 ## SQLite local profile
 
-Run **one worker** only. Lease/`SKIP LOCKED` multi-replica behavior requires Postgres (M5).
+Run **one worker** only. Multi-replica lease safety (`FOR UPDATE SKIP LOCKED`) requires Postgres.

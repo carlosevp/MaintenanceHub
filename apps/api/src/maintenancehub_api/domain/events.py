@@ -22,8 +22,6 @@ from maintenancehub_api.models import (
     EventStatus,
     EventTimelineEntry,
     ImpactTargetType,
-    Job,
-    JobStatus,
     MaintenanceEvent,
     OutboxEvent,
     TimelineEntryType,
@@ -41,23 +39,17 @@ def _enqueue_outbox(
     event_type: str,
     payload: dict[str, Any] | None = None,
 ) -> None:
-    """Stub enqueue for M5 — writes outbox + job row; worker is stub until M5."""
-    body = payload or {"event_id": event.id, "status": event.status.value}
+    """Transactional outbox (ADR-001). Worker drains outbox → leased jobs."""
+    body = dict(payload or {})
+    body.setdefault("event_id", event.id)
+    body.setdefault("status", event.status.value)
+    body.setdefault("event_type", event_type)
     db.add(
         OutboxEvent(
             aggregate_type="maintenance_event",
             aggregate_id=event.id,
             event_type=event_type,
             payload=body,
-        )
-    )
-    db.add(
-        Job(
-            job_type="notify_dispatch",
-            payload=body,
-            idempotency_key=f"event:{event.id}:{event_type}:{event.status.value}",
-            status=JobStatus.queued,
-            run_at=_now(),
         )
     )
 

@@ -62,15 +62,15 @@ def test_idempotency_unique_enforced():
         conn.execute(
             text(
                 "INSERT INTO notification_deliveries "
-                "(id, idempotency_key, channel, destination, status, attempt_count) "
-                "VALUES ('1', 'k1', 'smtp', 'a@b.c', 'pending', 0)"
+                "(id, idempotency_key, channel, destination_type, destination, status, attempt_count) "
+                "VALUES ('1', 'k1', 'smtp', 'email_address', 'a@b.c', 'pending', 0)"
             )
         )
         with pytest.raises(Exception):
             conn.execute(
                 text(
                     "INSERT INTO notification_deliveries "
-                    "(id, idempotency_key, channel, destination, status, attempt_count) "
-                    "VALUES ('2', 'k1', 'smtp', 'a@b.c', 'pending', 0)"
+                    "(id, idempotency_key, channel, destination_type, destination, status, attempt_count) "
+                    "VALUES ('2', 'k1', 'smtp', 'email_address', 'a@b.c', 'pending', 0)"
                 )
             )

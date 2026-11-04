@@ -4,7 +4,7 @@ Internal **Maintenance & Outage Communication Platform**.
 
 This is **not** a monitoring product. Status is published by people (planned maintenance, extensions, manual outages). Platform `/healthz` and `/readyz` exist only for pod liveness/readiness.
 
-Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M4** (recurrence M3b stubbed — see [docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
+Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M8** (recurrence expansion M3b still partial — see [docs/LIMITATIONS.md](docs/LIMITATIONS.md)).
 
 ## Stack
 
@@ -38,11 +38,30 @@ alembic -c db/alembic.ini upgrade head   # after first migration is generated
 # 4) API
 uvicorn maintenancehub_api.main:app --reload --app-dir apps/api/src --host 0.0.0.0 --port 8000
 
-# 5) Web (other terminal)
+# 5) Worker (other terminal) — required for notifications
+PYTHONPATH=apps/api/src:apps/worker/src \
+  python -m maintenancehub_worker.main
+
+# 6) Web (other terminal)
 cd apps/web && npm install && npm run dev
 ```
 
 Open http://localhost:5173
+
+### Test a notification (log sink when `SMTP_ENABLED=false`)
+
+```bash
+TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"publisher@demo.example.com","password":"password123"}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
+
+curl -s -X POST http://localhost:8000/api/v1/notifications/test \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"template_key":"event.created","destination_type":"email_address","destination":"you@example.com"}'
+```
+
+Worker also drains outbox on lifecycle transitions and sends subscription deliveries (watch worker logs for `[SMTP_DISABLED log sink]`).
 
 ### Demo logins (seeded)
 
@@ -85,7 +104,7 @@ PYTHONPATH=apps/api/src ENVIRONMENT=development AUTH_MODE=local_dev SEED_DEMO_DA
 
 Critical coverage in this slice: lifecycle state machine, API authz deny paths, event transitions/extend, SQLite schema/idempotency uniques, fail-closed `local_dev` in production.
 
-## Milestone acceptance (this PR)
+## Milestone acceptance
 
 | Milestone | Met? |
 |-----------|------|
@@ -93,10 +112,14 @@ Critical coverage in this slice: lifecycle state machine, API authz deny paths, 
 | M1 Core schema + portable migrations + seed | Yes |
 | M2 Catalog CRUD + RBAC read/write + deps origin | Yes |
 | M3 One-time scheduling, lifecycle, approval_state, timeline | Yes |
-| M3b Recurrence expansion | **Incomplete** (schema/stub only) |
+| M3b Recurrence expansion | **Partial** (schema + ICS RRULE emit; calendar expansion incomplete) |
 | M4 Dashboard, calendar day/week/month, favorites, accessible status | Yes |
+| M5 Durable jobs (outbox/lease/retry) | Yes |
+| M6 Subscriptions + SMTP/log notifications + dedupe | Yes (digests schema-only) |
+| M7 Power Automate email bridge destinations | Yes |
+| M8 Personalized ICS + revocable tokens | Yes |
 
-Deferred: M5+ (jobs execution, notifications, ICS, ServiceNow, enterprise auth wiring, banner). See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+Deferred: M9+ (ServiceNow, CSV CMDB, enterprise OIDC/LDAP wiring, banner). See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
 
 ## Auth safety
 

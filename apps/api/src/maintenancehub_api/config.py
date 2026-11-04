@@ -5,7 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AuthMode = Literal["local_dev", "oidc", "ldap"]
@@ -34,9 +34,28 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
 
     smtp_enabled: bool = False
+    smtp_host: str = "localhost"
+    smtp_port: int = 1025
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "maintenancehub@example.com"
+    smtp_use_tls: bool = False
+
     bridge_enabled: bool = False
+    bridge_mailbox: str = ""
+    # Subject template for Teams via email bridge. {channel_key} and {title} supported.
+    bridge_subject_template: str = "[MH-ROUTE:{channel_key}] {title}"
+
     servicenow_enabled: bool = False
     seed_demo_data: bool = True
+
+    # Job / notification worker
+    job_lease_seconds: int = 30
+    job_max_attempts: int = 5
+    delivery_max_attempts: int = 5
+    worker_id: str = ""
+
+    public_base_url: str = "http://localhost:8000"
 
     @field_validator("auth_mode", mode="before")
     @classmethod
@@ -60,6 +79,10 @@ class Settings(BaseSettings):
     @property
     def is_sqlite(self) -> bool:
         return self.database_url.startswith("sqlite")
+
+    @property
+    def is_postgres(self) -> bool:
+        return self.database_url.startswith("postgresql")
 
 
 @lru_cache
