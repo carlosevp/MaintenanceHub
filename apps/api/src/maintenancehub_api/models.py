@@ -337,6 +337,12 @@ class Tagging(Base):
 
 
 class Dependency(Base):
+    """Edge: ``from`` depends on ``to`` (consumer → provider).
+
+    Impact traversal walks reverse edges: maintenance on a provider finds consumers.
+    Optional environment endpoints support cross-env edges (e.g. Claims INT → Oracle NON-PROD).
+    """
+
     __tablename__ = "dependencies"
     __table_args__ = (
         UniqueConstraint(
@@ -345,8 +351,12 @@ class Dependency(Base):
             "to_type",
             "to_id",
             "dependency_kind",
+            "from_environment_id",
+            "to_environment_id",
             name="uq_dependency",
         ),
+        Index("ix_dependency_provider", "to_type", "to_id"),
+        Index("ix_dependency_consumer", "from_type", "from_id"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
@@ -356,6 +366,15 @@ class Dependency(Base):
     to_id: Mapped[str] = mapped_column(String(36), nullable=False)
     dependency_kind: Mapped[str] = mapped_column(String(64), default="depends_on", nullable=False)
     origin: Mapped[str] = mapped_column(String(32), default="manual", nullable=False)
+    from_environment_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
+    )
+    to_environment_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("environments.id", ondelete="SET NULL"), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 class ExternalCiLink(Base):
@@ -374,6 +393,9 @@ class ExternalCiLink(Base):
     external_id: Mapped[str] = mapped_column(String(200), nullable=False)
     display_name: Mapped[Optional[str]] = mapped_column(String(300), nullable=True)
     raw_payload: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -410,6 +432,8 @@ class MaintenanceEvent(Base):
     external_id: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     updated_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    # Optimistic concurrency for impact-analysis confirm (M14)
+    impact_revision: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -418,6 +442,9 @@ class MaintenanceEvent(Base):
     )
 
     impacts: Mapped[list[EventImpact]] = relationship(
+        back_populates="event", cascade="all, delete-orphan"
+    )
+    impact_decisions: Mapped[list["ImpactDecision"]] = relationship(
         back_populates="event", cascade="all, delete-orphan"
     )
     timeline: Mapped[list[EventTimelineEntry]] = relationship(
@@ -596,6 +623,40 @@ class OccurrenceImpact(Base):
     )
 
     occurrence: Mapped[OccurrenceRecord] = relationship(back_populates="impacts")
+
+
+class ImpactDecision(Base):
+    """Audit of publisher impact confirmations (include / exclude / manual)."""
+
+    __tablename__ = "impact_decisions"
+    __table_args__ = (
+        Index("ix_impact_decisions_event", "event_id", "original_starts_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    event_id: Mapped[str] = mapped_column(
+        ForeignKey("maintenance_events.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Null = series-level confirmation; else occurrence original start
+    original_starts_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    target_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    environment_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    # included | excluded | manual
+    decision: Mapped[str] = mapped_column(String(32), nullable=False)
+    # direct | downstream | manual
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    path_json: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    revision_token: Mapped[str] = mapped_column(String(128), nullable=False)
+    actor_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    event: Mapped[MaintenanceEvent] = relationship(back_populates="impact_decisions")
 
 
 # ---------------------------------------------------------------------------

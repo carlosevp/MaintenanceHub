@@ -1,14 +1,14 @@
 # MaintenanceHub implementation audit
 
-**Branch audited:** reconciled tip `cursor/pr5-pr6-reconcile-0ed4` (PR #6 audit baseline + PR #5 M3b)  
+**Branch audited:** `cursor/m14-impact-preview-6e6d` (M14 Impact Analysis & Notification Preview on hardened PR #8 tip `cursor/occurrence-lifecycle-0ed4`)  
 **Sources of truth:** Project store product-brief / PRD / ADRs / data-model / api-contracts / milestone-plan; repo `docs/LIMITATIONS.md`; actual source (not class existence alone).  
 **Date:** 2026-11-04
 
 ## Executive summary
 
-MaintenanceHub delivers a working **communication** stack for planned maintenance and manual outages (catalog → schedule → dashboard/calendar → subscriptions/SMTP/bridge → ICS → SN poll/CSV APIs → banner → **M3b recurrence**). It is **not** a monitoring product.
+MaintenanceHub delivers a working **communication** stack for planned maintenance and manual outages (catalog → schedule → dashboard/calendar → subscriptions/SMTP/bridge → ICS → SN poll/CSV APIs → banner → **M3b recurrence** → **sparse occurrence lifecycle** → **M14 impact analysis preview/confirm**). It is **not** a monitoring product.
 
-PR #6 audit security/integrity fixes are preserved (application-scoped grants, public banner without browser secrets, approval-confirm outbox, OpenShift `API_UPSTREAM`, weak JWT / `create_all` guards, Compose+Postgres, Makefile lint). PR #5 adds bounded RRULE expansion, occurrence identity, series edit scopes, and phase distinctions (approved ≠ outage). Remaining gaps are mostly **admin UI**, **digests**, and **live IdP**.
+PR #8 occurrence lifecycle (sparse records, notify targeting, app+env pairs) is preserved. **M14** adds reverse multi-hop dependency analysis, read-only impact/audience/conflict preview with revision tokens, publisher confirm (include/exclude/manual) with outbox only after confirm, and Impact Analysis UX in the publish flow. Remaining gaps are mostly **admin UI**, **digests**, and **live IdP**.
 
 ---
 
@@ -44,10 +44,11 @@ Legend: **F** = fully functional · **P** = partially functional · **S** = stub
 | Public banner API + JS package | **F** | `api/banner.py`, `packages/banner` | Banner + sanitize tests | `/banner-demo` |
 | OpenAPI | **F** | FastAPI `/docs` | — | — |
 | Non-root containers / OpenShift | **P→F*** | Dockerfiles UID 10001; manifests; `API_UPSTREAM` | Manual | — |
-| Demo data | **F** | `seed.py` `[DEMO]` | Seed smoke | Dashboard |
+| Demo data | **F** | `seed.py` `[DEMO]` incl. Oracle NON-PROD impact graph | Seed smoke | Dashboard |
+| **M14 Impact analysis & notify preview** | **F** | `dependency_analysis` + `impact_preview`; `/impact-analysis/preview|confirm`; revision tokens; ImpactDecision audit | `test_dependency_analysis`, `test_impact_analysis`, Postgres M14 | Publish-flow Impact Analysis step |
 | Monitoring / Teams APIs | **M** (non-goal) | Absent by design | — | About/LIMITATIONS |
 
-\*Improved in this audit PR.
+\*Improved in prior audit / occurrence / M14 PRs.
 
 ---
 
@@ -115,15 +116,24 @@ Global RBAC was always enforced. **Application grants are now enforced** on even
 
 ---
 
-## Functional demo checklist (executed on reconcile tip)
+### M14 Impact analysis (this PR)
+
+- Domain: reverse BFS consumers←providers; max depth; cycles; path provenance; CMDB+manual origins; freshness warnings; **no confidence %**; absent deps ≠ none.
+- Preview API read-only (no jobs/outbox/deliveries). Confirm validates `revision_token`, persists `ImpactDecision`, optional promote to `confirmed_scheduled` + outbox.
+- Authz: grants required on **seed** apps; downstream includes are notify-reach only.
+- Seed: Oracle NON-PROD → Claims INT / Billing DEV / Member API QA + Portal BFF→Member transitive; recurring series with one occurrence override; overlap conflict demo.
+- UI: two-step publish (Details → Impact Analysis) with exclude/manual/reach/conflicts.
+
+## Functional demo checklist (executed on M14 tip)
 
 | Check | Command / action | Result |
 |-------|------------------|--------|
-| Full pytest (+ Postgres J) | `TEST_POSTGRES_URL=postgresql+psycopg://mh:mh@127.0.0.1:5432/mh_test pytest tests -q` | **85 passed** |
-| Banner package | `cd packages/banner && npm test && npm run build` | **2 passed**, build OK |
-| Web vitest + production build | `cd apps/web && npm test && npm run build` | **2 passed**, build OK |
+| Full pytest (+ Postgres) | `pytest tests -q` | **112 passed** (incl. M14 + Postgres migration/lifecycle/concurrency) |
+| Banner package | `cd packages/banner && npm test && npm run build` | Prior package tests |
+| Web vitest + production build | `cd apps/web && npm test && npm run build` | **5 passed**, build OK |
 | Lint | `make lint` | **All checks passed** |
 | E2E A–I | `tests/api/test_reconcile_e2e.py` | Pass |
+| Postgres M14 | `tests/migrations/test_postgres_m14_impact.py` | Pass |
 | E2E J Postgres concurrency | `tests/worker/test_postgres_concurrency.py` | Pass |
 
 Local: `make install && make migrate && make api` / `make worker` / `make web` → `publisher@demo.example.com` / `password123`.  

@@ -93,6 +93,89 @@ export type TimelineEntry = {
   payload: Record<string, unknown>;
 };
 
+export type ImpactSeed = {
+  target_type: string;
+  target_id: string;
+  environment_id?: string | null;
+};
+
+export type SuggestedImpact = {
+  target_type: string;
+  target_id: string;
+  environment_id?: string | null;
+  environment_key?: string | null;
+  display_name: string;
+  classification: string;
+  selection?: string;
+  origins?: string[];
+  dependency_kinds?: string[];
+  warnings?: string[];
+  paths?: Array<
+    Array<{
+      dependency_id: string;
+      consumer_type: string;
+      consumer_id: string;
+      consumer_name: string;
+      consumer_environment_id?: string | null;
+      consumer_environment_key?: string | null;
+      provider_type: string;
+      provider_id: string;
+      provider_name: string;
+      provider_environment_id?: string | null;
+      provider_environment_key?: string | null;
+      origin: string;
+      dependency_kind: string;
+    }>
+  >;
+};
+
+export type ImpactPreview = {
+  revision_token: string;
+  impact_revision: number;
+  dependency_fingerprint: string;
+  analyzed_at: string;
+  max_depth: number;
+  direct_targets: SuggestedImpact[];
+  suggested_downstream: SuggestedImpact[];
+  manual_additions: SuggestedImpact[];
+  exclusions: Array<ImpactSeed & { reason?: string | null }>;
+  proposed_effective_impacts: Array<ImpactSeed & { display_name?: string }>;
+  warnings: Array<{
+    code: string;
+    message: string;
+    subject_type?: string | null;
+    subject_id?: string | null;
+  }>;
+  audience: {
+    unique_recipients: number;
+    email_destinations: string[];
+    teams_bridge_channels: string[];
+    subscription_count: number;
+    users_with_multiple_subscriptions: number;
+    note: string;
+  };
+  conflicts: Array<{
+    event_id: string;
+    title: string;
+    occurrence_id: string;
+    starts_at: string;
+    ends_at: string;
+    classification: string;
+    explanation: string;
+    status: string;
+  }>;
+  read_only: boolean;
+  notifications_sent: boolean;
+};
+
+export type InfraComponent = {
+  id: string;
+  key: string;
+  name: string;
+  kind?: string | null;
+  description?: string | null;
+};
+
 function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
@@ -241,6 +324,20 @@ export const api = {
     ),
   seriesEdit: (id: string, body: unknown) =>
     request<MaintenanceEvent>(`/api/v1/events/${id}/series-edit`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  infraComponents: (q?: string) =>
+    request<InfraComponent[]>(
+      `/api/v1/infra-components${q ? `?q=${encodeURIComponent(q)}` : ""}`,
+    ),
+  impactPreview: (body: unknown) =>
+    request<ImpactPreview>("/api/v1/impact-analysis/preview", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  impactConfirm: (eventId: string, body: unknown) =>
+    request<MaintenanceEvent>(`/api/v1/impact-analysis/events/${eventId}/confirm`, {
       method: "POST",
       body: JSON.stringify(body),
     }),

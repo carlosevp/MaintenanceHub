@@ -15,6 +15,7 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 | **M12 Banner** | **Functional** package + `/api/v1/public/banner`. Public DTO is **unauthenticated** (browser-safe). Do **not** embed `client_secret` in frontends. |
 | **M13 Demo / deploy** | Seed + Compose (Postgres) + OpenShift manifests. Web nginx uses `API_UPSTREAM`. Production must run Alembic (no `create_all`). |
 | **Application-scoped grants** | **Enforced** on event mutations (incl. series/occurrence edits) and application updates. Creator auto-granted. Directory-group grants and fine-grained catalog CRUD still limited. |
+| **M14 Impact analysis** | **Implemented**: dependency reverse traversal, preview (audience/conflicts/revision token), confirm+outbox, publish-flow UX, Oracle NON-PROD seed. **Advisory only** — conflicts never block publish; no auto health; dependency graph quality depends on CMDB/manual edges (absent ≠ none). Infra/service catalog admin UX still thin (list API only). |
 | **Admin UX** | SN unmatched, CSV import, service credentials, audit, jobs, role mappings — **API-only** (no in-app admin screens). |
 | **Native mobile / Redis / RabbitMQ** | Out of scope. |
 
@@ -25,6 +26,8 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 - **Dashboard “current”:** Only human-published **executing** statuses in-window (per occurrence when a sparse record exists). A confirmed series still in master `scheduled` that overlaps now is **not** treated as executing unless that occurrence was started. Approved windows never appear as current/outage and do not send reminders.
 - **Per-occurrence lifecycle:** Sparse `occurrence_records` persist only for overrides/state/audit (no unbounded materialization). Recurring masters typically stay `scheduled`; Start/Extend/Verifying/Complete/Cancel are per-occurrence APIs. Clock time never auto-completes.
 - **Occurrence notification targeting:** Effective impacts = occurrence override when `impacts_overridden` (including an explicit empty set); otherwise series defaults. `app_environment` subscriptions match **(application, environment) pairs** on the same impact row — not independent app/env ID sets. Event-level subscriptions match once (deduped). Impact changes reconcile queued reminders; sent delivery history is immutable. Lifecycle still requires grants on every *effective* impacted application (proposing a downstream app without a grant is allowed on patch, but lifecycle of that occurrence then needs grants on all effective apps).
+- **M14 confirm vs lifecycle grants:** Impact confirm requires grants on **seed** applications only; including downstream apps for notification reach does not assert those apps unavailable and does not require grants on them. After confirm, occurrence lifecycle of a multi-app effective set may still need grants on all effective apps.
+- **M14 preview staleness:** Confirm rejects mismatched `revision_token` (409) when dependency fingerprint or event `impact_revision` changes between preview and publish.
 - **Support-group subscription targets:** Still non-matching (deferred).
 
 ## Permanent non-goals

@@ -17,7 +17,9 @@ from maintenancehub_api.models import (
     DependencyOrigin,
     EventStatus,
     Environment,
+    ExternalCiLink,
     Favorite,
+    InfraComponent,
     ReminderOffset,
     Role,
     RoleName,
@@ -76,6 +78,7 @@ def seed_demo(db: Session) -> None:
         ("QA", "QA", 30),
         ("UAT", "UAT", 40),
         ("PROD", "Production", 50),
+        ("NON-PROD", "Non-Production shared", 15),
     ]
     envs: dict[str, Environment] = {}
     for key, name, sort in env_defs:
@@ -112,6 +115,30 @@ def seed_demo(db: Session) -> None:
             "[DEMO] Inventory Service",
             "Warehouse inventory microservice",
             [("INT", "Inv-INT"), ("UAT", "Inv-UAT"), ("PROD", "Inv-PROD")],
+        ),
+        (
+            "claims",
+            "[DEMO] Claims",
+            "Claims adjudication (M14 impact analysis consumer)",
+            [("INT", "Claims-INT"), ("DEV", "Claims-DEV")],
+        ),
+        (
+            "billing",
+            "[DEMO] Billing",
+            "Billing engine (M14 impact analysis consumer)",
+            [("DEV", "Billing-DEV"), ("INT", "Billing-INT")],
+        ),
+        (
+            "member-api",
+            "[DEMO] Member API",
+            "Member profile API (depends on Oracle; used transitively)",
+            [("QA", "Member-QA"), ("INT", "Member-INT")],
+        ),
+        (
+            "portal-bff",
+            "[DEMO] Portal BFF",
+            "BFF that depends on Member API (transitive Oracle impact)",
+            [("QA", "Portal-QA")],
         ),
     ]
     apps: dict[str, Application] = {}
@@ -521,3 +548,210 @@ def seed_demo(db: Session) -> None:
         },
         actor_id=publisher.id,
     )
+
+    _seed_m14_oracle_impact_demo(db, apps=apps, envs=envs, publisher=publisher)
+
+
+def _seed_m14_oracle_impact_demo(
+    db: Session,
+    *,
+    apps: dict[str, Application],
+    envs: dict[str, Environment],
+    publisher: User,
+) -> None:
+    """Shared Oracle NON-PROD → Claims INT / Billing DEV / Member API QA + transitive Portal BFF."""
+    oracle = (
+        db.query(InfraComponent).filter(InfraComponent.key == "oracle-shared-nonprod").first()
+    )
+    if not oracle:
+        oracle = InfraComponent(
+            key="oracle-shared-nonprod",
+            name="[DEMO] Oracle Database (NON-PROD)",
+            kind="database",
+            description="Shared Oracle instance for non-production workloads",
+        )
+        db.add(oracle)
+        db.flush()
+
+    # External CI links (CMDB-ish) for freshness demo
+    for app_key, ext_id in (
+        ("claims", "ci-claims"),
+        ("billing", "ci-billing"),
+        ("member-api", "ci-member-api"),
+        ("portal-bff", "ci-portal-bff"),
+    ):
+        if app_key not in apps:
+            continue
+        exists = (
+            db.query(ExternalCiLink)
+            .filter(
+                ExternalCiLink.subject_type == "application",
+                ExternalCiLink.subject_id == apps[app_key].id,
+                ExternalCiLink.source_system == "servicenow",
+            )
+            .first()
+        )
+        if not exists:
+            db.add(
+                ExternalCiLink(
+                    subject_type="application",
+                    subject_id=apps[app_key].id,
+                    source_system="servicenow",
+                    external_id=ext_id,
+                    display_name=apps[app_key].name,
+                )
+            )
+
+    def _edge(frm_app: str, frm_env: str | None, to_type: str, to_id: str, to_env: str | None, origin: str):
+        if frm_app not in apps:
+            return
+        q = db.query(Dependency).filter(
+            Dependency.from_type == "application",
+            Dependency.from_id == apps[frm_app].id,
+            Dependency.to_type == to_type,
+            Dependency.to_id == to_id,
+            Dependency.dependency_kind == "depends_on",
+        )
+        if frm_env:
+            q = q.filter(Dependency.from_environment_id == envs[frm_env].id)
+        else:
+            q = q.filter(Dependency.from_environment_id.is_(None))
+        if to_env:
+            q = q.filter(Dependency.to_environment_id == envs[to_env].id)
+        else:
+            q = q.filter(Dependency.to_environment_id.is_(None))
+        if q.first():
+            return
+        db.add(
+            Dependency(
+                from_type="application",
+                from_id=apps[frm_app].id,
+                to_type=to_type,
+                to_id=to_id,
+                from_environment_id=envs[frm_env].id if frm_env else None,
+                to_environment_id=envs[to_env].id if to_env else None,
+                dependency_kind="depends_on",
+                origin=origin,
+            )
+        )
+
+    # Consumers → Oracle NON-PROD
+    _edge("claims", "INT", "infra_component", oracle.id, "NON-PROD", DependencyOrigin.import_.value)
+    _edge("billing", "DEV", "infra_component", oracle.id, "NON-PROD", DependencyOrigin.import_.value)
+    _edge("member-api", "QA", "infra_component", oracle.id, "NON-PROD", DependencyOrigin.manual.value)
+    # Transitive: Portal BFF QA → Member API QA
+    _edge("portal-bff", "QA", "application", apps["member-api"].id, "QA", DependencyOrigin.manual.value)
+    db.commit()
+
+    # Subscriptions for reach preview (unique destinations)
+    for email, app_key, env_key in (
+        ("claims-int-watch@demo.example.com", "claims", "INT"),
+        ("billing-dev-watch@demo.example.com", "billing", "DEV"),
+        ("member-qa-watch@demo.example.com", "member-api", "QA"),
+    ):
+        if app_key not in apps:
+            continue
+        existing = (
+            db.query(Subscription).filter(Subscription.destination == email).first()
+        )
+        if existing:
+            continue
+        sub = Subscription(
+            user_id=publisher.id,
+            destination_type="email_address",
+            destination=email,
+            is_active=True,
+        )
+        db.add(sub)
+        db.flush()
+        db.add(
+            SubscriptionTarget(
+                subscription_id=sub.id,
+                target_type="app_environment",
+                target_id=f"{apps[app_key].id}:{envs[env_key].id}",
+            )
+        )
+        db.add(ReminderOffset(subscription_id=sub.id, offset_minutes=-60))
+    db.commit()
+
+    # Recurring Oracle maintenance — series default Oracle NON-PROD; one occ different impacts
+    from maintenancehub_api.models import MaintenanceEvent
+
+    title = "[DEMO] Oracle NON-PROD patch window (impact analysis)"
+    if db.query(MaintenanceEvent).filter(MaintenanceEvent.title == title).first():
+        return
+
+    now = datetime.now(timezone.utc)
+    starts = (now + timedelta(days=5)).replace(hour=2, minute=0, second=0, microsecond=0)
+    series = event_service.create_event(
+        db,
+        data={
+            "kind": "planned_maintenance",
+            "title": title,
+            "description": (
+                "M14 demo: shared Oracle NON-PROD. Preview suggests Claims INT, Billing DEV, "
+                "Member API QA, and transitive Portal BFF QA."
+            ),
+            "expected_impact": "DB brief unavailability in NON-PROD",
+            "approval_state": "approved_window",
+            "starts_at": starts,
+            "ends_at": starts + timedelta(hours=2),
+            "timezone": "UTC",
+            "impacts": [
+                {
+                    "target_type": "infra_component",
+                    "target_id": oracle.id,
+                    "environment_id": envs["NON-PROD"].id,
+                }
+            ],
+            "recurrence": {"freq": "WEEKLY", "interval": 1, "count": 4},
+        },
+        actor_id=publisher.id,
+    )
+    from maintenancehub_api.domain import occurrences as occurrence_service
+    from maintenancehub_api.domain import recurrence as recurrence_service
+
+    occs = recurrence_service.expand_event_occurrences(
+        series,
+        range_start=starts - timedelta(seconds=1),
+        range_end=starts + timedelta(days=28),
+    )
+    if len(occs) >= 2:
+        # Second occurrence: override to Claims INT only (differs from series default)
+        occurrence_service.patch_occurrence(
+            db,
+            series,
+            original_starts_at=occs[1].original_starts_at,
+            actor_id=publisher.id,
+            description="[DEMO] Occurrence-specific impacts (Claims INT only)",
+            impacts=[
+                {
+                    "target_type": "application",
+                    "target_id": apps["claims"].id,
+                    "environment_id": envs["INT"].id,
+                }
+            ],
+        )
+    # Overlapping Claims maintenance for conflict demo
+    overlap_title = "[DEMO] Claims INT batch (overlaps Oracle window)"
+    if not db.query(MaintenanceEvent).filter(MaintenanceEvent.title == overlap_title).first():
+        event_service.create_event(
+            db,
+            data={
+                "kind": "planned_maintenance",
+                "title": overlap_title,
+                "description": "Overlaps Oracle NON-PROD window — advisory conflict in impact preview",
+                "approval_state": "confirmed_scheduled",
+                "starts_at": starts + timedelta(minutes=30),
+                "ends_at": starts + timedelta(hours=3),
+                "timezone": "UTC",
+                "impacts": [
+                    {
+                        "target_type": "application",
+                        "target_id": apps["claims"].id,
+                        "environment_id": envs["INT"].id,
+                    }
+                ],
+            },
+            actor_id=publisher.id,
+        )

@@ -81,6 +81,16 @@ class DependencyOut(ORMModel):
     to_id: str
     dependency_kind: str
     origin: str
+    from_environment_id: Optional[str] = None
+    to_environment_id: Optional[str] = None
+
+
+class InfraComponentOut(ORMModel):
+    id: str
+    key: str
+    name: str
+    kind: Optional[str] = None
+    description: Optional[str] = None
 
 
 class TagCreate(BaseModel):

@@ -12,6 +12,7 @@ from maintenancehub_api.models import (
     Dependency,
     Environment,
     ExternalCiLink,
+    InfraComponent,
     Ownership,
     OwnerType,
     SubjectType,
@@ -30,6 +31,7 @@ from maintenancehub_api.schemas.catalog import (
     EnvironmentOut,
     ExternalCiLinkIn,
     ExternalCiLinkOut,
+    InfraComponentOut,
     OwnershipIn,
     OwnershipOut,
     SupportGroupCreate,
@@ -331,6 +333,21 @@ def put_ci_links(
         )
     db.commit()
     return list_ci_links(app_id, db, _)  # type: ignore[arg-type]
+
+
+@router.get("/infra-components", response_model=list[InfraComponentOut])
+def list_infra_components(
+    db: Session = Depends(get_db),
+    _: AuthUser = Depends(get_current_user),
+    q: str | None = Query(None),
+) -> list[InfraComponent]:
+    query = db.query(InfraComponent)
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            (InfraComponent.key.ilike(like)) | (InfraComponent.name.ilike(like))
+        )
+    return query.order_by(InfraComponent.name).all()
 
 
 @router.get("/tags", response_model=list[TagOut])
