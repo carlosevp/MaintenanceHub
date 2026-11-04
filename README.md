@@ -118,8 +118,26 @@ Critical coverage in this slice: lifecycle state machine, API authz deny paths, 
 | M6 Subscriptions + SMTP/log notifications + dedupe | Yes (digests schema-only) |
 | M7 Power Automate email bridge destinations | Yes |
 | M8 Personalized ICS + revocable tokens | Yes |
+| M9 ServiceNow poll adapter | Yes (fixture/null by default; HTTP optional) |
+| M10 CMDB CSV import | Yes |
+| M11 Enterprise auth abstraction | Yes (OIDC/LDAP mock locally; live IdP until configured) |
 
-Deferred: M9+ (ServiceNow, CSV CMDB, enterprise OIDC/LDAP wiring, banner). See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+Deferred: M12 banner package polish, M13 deploy hardening. Live OIDC token exchange / LDAP bind need real IdP config. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md).
+
+### ServiceNow dry-run & CSV preview
+
+```bash
+# SN dry-run (fixture, no DB writes, no live HTTP)
+curl -s -X POST http://localhost:8000/api/v1/admin/servicenow/poll-now \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"dry_run":true}'
+
+# CSV upload → preview
+curl -s -X POST http://localhost:8000/api/v1/admin/imports/csv \
+  -H "Authorization: Bearer $TOKEN" -F kind=cmdb_ci -F file=@cis.csv
+curl -s -X POST http://localhost:8000/api/v1/admin/imports/$JOB_ID/preview \
+  -H "Authorization: Bearer $TOKEN"
+```
 
 ## Auth safety
 

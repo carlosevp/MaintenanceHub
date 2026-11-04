@@ -3,7 +3,6 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from maintenancehub_api.adapters.bridge import get_bridge_adapter
 from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, get_current_user, require_roles
 from maintenancehub_api.domain.notifications import (
@@ -143,23 +142,4 @@ def test_send(
     }
 
 
-@router.post("/admin/settings/integrations/test")
-def test_integrations(
-    kind: str = Query("smtp", pattern="^(smtp|bridge|servicenow)$"),
-    _: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
-) -> dict:
-    if kind == "bridge":
-        return get_bridge_adapter().connection_test()
-    if kind == "smtp":
-        from maintenancehub_api.config import get_settings
-
-        s = get_settings()
-        return {
-            "smtp_enabled": s.smtp_enabled,
-            "host": s.smtp_host,
-            "port": s.smtp_port,
-            "from": s.smtp_from,
-            "ok": True,
-            "note": "When SMTP_ENABLED=false, deliveries use the log sink.",
-        }
-    return {"ok": False, "detail": "ServiceNow not enabled in this milestone"}
+# Integration connection tests live in api/admin_integrations.py (M9+)

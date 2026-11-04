@@ -1,4 +1,4 @@
-"""Job handlers for outbox drain, notify dispatch, send, reminders."""
+"""Job handlers for outbox drain, notify, and ServiceNow poll."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from maintenancehub_api.domain.notifications import (
     process_outbox,
     send_delivery,
 )
+from maintenancehub_api.domain.servicenow_sync import run_poll
 
 
 def handle_outbox_drain(db: Session, _payload: dict[str, Any]) -> dict[str, Any]:
@@ -35,9 +36,15 @@ def handle_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, An
     return process_notify_reminder(db, payload)
 
 
+def handle_sn_poll(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
+    fixture = payload.get("fixture_records")
+    return run_poll(db, fixture_records=fixture)
+
+
 HANDLERS = {
     "outbox_drain": handle_outbox_drain,
     "notify_dispatch": handle_notify_dispatch,
     "notify_send": handle_notify_send,
     "notify_reminder": handle_notify_reminder,
+    "sn_poll": handle_sn_poll,
 }

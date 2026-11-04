@@ -17,6 +17,6 @@ class TokenResponse(BaseModel):
 
 class MeResponse(ORMModel):
     id: str
-    email: EmailStr
+    email: str
     display_name: str
     roles: list[str]

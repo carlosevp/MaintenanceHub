@@ -2,27 +2,40 @@
 
 This document lists what is **explicitly incomplete or deferred**. Nothing listed here is “fake finished.”
 
-## Current wave (through M8)
+## Current wave (through M11)
 
 | Item | Status |
 |------|--------|
-| **M3b Recurrence** | Schema exists; RRULE is emitted in ICS when present, but **occurrence expansion / DST fixtures for in-app calendar are incomplete**. |
-| **M5 Durable jobs** | **Implemented**: outbox drain → leased jobs → handlers; SQLite single-worker; Postgres SKIP LOCKED path. Digests as job type not fully wired. |
-| **M6 Subscriptions + SMTP** | **Implemented**: subscriptions, reminders, templates, log/SMTP sink, delivery history, dedupe. Optional digests are schema-only (`digest_mode`); digest worker not shipped. |
-| **M7 Power Automate bridge** | **Implemented**: `teams_bridge_channel` destinations, subject routing template, connection test. No Teams SDK. |
-| **M8 ICS feeds** | **Implemented**: revocable tokens, favorites/subscriptions scope, Outlook-oriented VCALENDAR. Full VTIMEZONE blocks / complex EXDATE suites are minimal (UTC DTSTART/DTEND + TZ hint). |
-| **ServiceNow poll / CMDB CSV** | Not implemented (M9–M10). |
-| **Enterprise OIDC/LDAP** | Provider hooks via `AUTH_MODE`; only `local_dev` login works. Fail-closed startup guard is implemented. |
-| **Banner package** | Stub under `packages/banner` (M12). |
+| **M3b Recurrence** | Schema + ICS RRULE emit; in-app calendar occurrence expansion / DST fixtures incomplete. |
+| **M5–M8** | Jobs, subscriptions/SMTP/log, email bridge, ICS — implemented (digests schema-only). |
+| **M9 ServiceNow poll** | **Implemented**: poll adapter (null / fixture / HTTP), upsert by sys_id, cancel mapping, unmatched queue (link/create/ignore), dry-run, push interface stub only. Live HTTP requires env secrets + `SERVICENOW_ENABLED=true` + `SERVICENOW_USE_FIXTURE=false`. |
+| **M10 CMDB CSV** | **Implemented**: upload/preview/commit/history for CIs + relationship CSV; preserves `origin=manual` unless `overwrite_manual_dependencies`. |
+| **M11 Enterprise auth** | **Implemented**: fail-closed local_dev; OIDC + LDAP provider abstraction with **mock IdP/LDAP for local/tests**; live OIDC token exchange / LDAP bind raise until fully configured. Group→role mappings, service credentials, audit log, scoped banner read. |
+| **Banner package** | Stub under `packages/banner` (full package polish → M12). Public banner API exists for service creds. |
 | **OpenShift manifests** | Minimal placeholders under `deploy/openshift/`. |
-| **Application-scoped grants enforcement** | Grants table exists; full grant checks → M11. |
+| **Application-scoped grants enforcement** | Grants table + mappings exist; fine-grained per-app write enforcement still limited. |
+
+## Enabling ServiceNow locally (fixtures)
+
+```bash
+export SERVICENOW_ENABLED=true
+export SERVICENOW_USE_FIXTURE=true
+export SERVICENOW_FIXTURE_PATH=fixtures/servicenow_changes.json
+# Dry-run (no DB writes):
+curl -X POST .../api/v1/admin/servicenow/poll-now -d '{"dry_run":true}'
+# Apply fixture:
+curl -X POST .../api/v1/admin/servicenow/poll-now -d '{"fixture_records":[...]}'
+```
+
+With `SERVICENOW_ENABLED=false`, the null adapter makes **no HTTP calls**.
 
 ## Permanent non-goals
 
 - Application/infra health monitoring, synthetics, metrics, auto-status from telemetry
 - Direct Microsoft Teams API / webhooks (**Teams via email bridge only**)
+- ServiceNow push/webhooks (interface stub only)
 - `/healthz` and `/readyz` are **platform probes for MaintenanceHub pods only**
 
 ## SQLite local profile
 
-Run **one worker** only. Multi-replica lease safety (`FOR UPDATE SKIP LOCKED`) requires Postgres.
+Run **one worker** only. Multi-replica lease safety requires Postgres.

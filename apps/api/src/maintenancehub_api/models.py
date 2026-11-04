@@ -704,3 +704,84 @@ class AuditLog(Base):
     at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ---------------------------------------------------------------------------
+# Integrations — ServiceNow / CSV (M9–M10)
+# ---------------------------------------------------------------------------
+
+
+class IntegrationSetting(Base):
+    __tablename__ = "integration_settings"
+    __table_args__ = (UniqueConstraint("namespace", "key", name="uq_integration_setting"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    namespace: Mapped[str] = mapped_column(String(64), nullable=False)  # servicenow | smtp | bridge
+    key: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Non-secret config as JSON; secrets referenced by env var name in value
+    value: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class SnChangeSnapshot(Base):
+    __tablename__ = "sn_change_snapshots"
+    __table_args__ = (
+        UniqueConstraint("source_system", "external_id", name="uq_sn_snapshot_external"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    source_system: Mapped[str] = mapped_column(String(64), default="servicenow", nullable=False)
+    external_id: Mapped[str] = mapped_column(String(200), nullable=False)  # sys_id
+    content_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    sys_updated_on: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    raw_payload: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    maintenance_event_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("maintenance_events.id", ondelete="SET NULL"), nullable=True
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class SnUnmatchedRecord(Base):
+    __tablename__ = "sn_unmatched_records"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    source_system: Mapped[str] = mapped_column(String(64), default="servicenow", nullable=False)
+    external_id: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    reason: Mapped[str] = mapped_column(String(200), nullable=False)
+    raw_payload: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(
+        String(32), default="open", nullable=False
+    )  # open | linked | created | ignored
+    resolved_event_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CsvImportJob(Base):
+    __tablename__ = "csv_import_jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    kind: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )  # cmdb_ci | ci_relationships
+    filename: Mapped[str] = mapped_column(String(300), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="uploaded", nullable=False
+    )  # uploaded | previewed | committed | failed
+    column_map: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    # overwrite_manual_dependencies when true allows replacing origin=manual edges
+    options: Mapped[Any] = mapped_column(JSON, nullable=False, default=dict)
+    raw_csv: Mapped[str] = mapped_column(Text, nullable=False)
+    preview: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    result_summary: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    committed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

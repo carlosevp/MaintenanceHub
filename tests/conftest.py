@@ -73,6 +73,24 @@ def db_session(db_engine):
     session.close()
 
 
+@pytest.fixture(autouse=True)
+def _reset_settings_env():
+    """Prevent AUTH_MODE / feature-flag leaks across tests (lru_cache)."""
+    os.environ["ENVIRONMENT"] = "development"
+    os.environ["AUTH_MODE"] = "local_dev"
+    os.environ["ALLOW_LOCAL_AUTH"] = "false"
+    os.environ["SEED_DEMO_DATA"] = "false"
+    os.environ["JWT_SECRET"] = "test-secret"
+    os.environ["OIDC_MOCK"] = "false"
+    os.environ["LDAP_MOCK"] = "false"
+    os.environ["SERVICENOW_ENABLED"] = "false"
+    from maintenancehub_api.config import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture()
 def client(db_engine, db_session):
     Session = sessionmaker(bind=db_engine, autoflush=False, autocommit=False, future=True)
@@ -84,12 +102,16 @@ def client(db_engine, db_session):
         finally:
             s.close()
 
+    from maintenancehub_api.config import get_settings
+
+    get_settings.cache_clear()
     app = create_app()
     app.dependency_overrides[get_db] = _override
     with TestClient(app) as c:
         c.db = db_session  # type: ignore[attr-defined]
         yield c
     app.dependency_overrides.clear()
+    get_settings.cache_clear()
 
 
 def auth_header(client: TestClient, email: str, password: str = "password123") -> dict[str, str]:

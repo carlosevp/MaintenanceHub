@@ -43,13 +43,41 @@ class Settings(BaseSettings):
 
     bridge_enabled: bool = False
     bridge_mailbox: str = ""
-    # Subject template for Teams via email bridge. {channel_key} and {title} supported.
     bridge_subject_template: str = "[MH-ROUTE:{channel_key}] {title}"
 
+    # ServiceNow (disabled by default — null/fixture adapter in local_dev)
     servicenow_enabled: bool = False
+    servicenow_instance_url: str = ""
+    servicenow_username: str = ""
+    servicenow_password: str = ""  # prefer OpenShift Secret / env, never commit
+    servicenow_api_path: str = "/api/now/table/change_request"
+    servicenow_query: str = "active=true"
+    servicenow_use_fixture: bool = True  # local_dev: load fixture JSON instead of HTTP
+    servicenow_fixture_path: str = "fixtures/servicenow_changes.json"
+    servicenow_poll_interval_seconds: int = 300
+    # cancel | unmatched — what to do when SN state is cancelled and no mapped event policy
+    servicenow_cancel_policy: str = "cancel_event"
+
+    # OIDC (M11) — secrets via env
+    oidc_issuer: str = ""
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+    oidc_redirect_uri: str = "http://localhost:8000/api/v1/auth/oidc/callback"
+    oidc_scopes: str = "openid profile email"
+    # When true, OIDC uses in-memory mock IdP (tests / local without real IdP)
+    oidc_mock: bool = False
+
+    # LDAP/LDAPS
+    ldap_url: str = ""  # e.g. ldaps://ldap.example.com:636
+    ldap_bind_dn: str = ""
+    ldap_bind_password: str = ""
+    ldap_user_base: str = ""
+    ldap_user_filter: str = "(uid={username})"
+    ldap_group_attr: str = "memberOf"
+    ldap_mock: bool = False
+
     seed_demo_data: bool = True
 
-    # Job / notification worker
     job_lease_seconds: int = 30
     job_max_attempts: int = 5
     delivery_max_attempts: int = 5
