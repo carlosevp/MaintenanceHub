@@ -83,6 +83,21 @@ describe("EventCreatePage impact analysis stability", () => {
     createEvent.mockReset();
     impactConfirm.mockReset();
     impactPreview.mockImplementation(async () => previewPayload(`tok-${impactPreview.mock.calls.length}`));
+    // Team+ profile so impact flow is available (Essentials fail-closed defaults otherwise)
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profile: "team",
+        label: "Team",
+        capabilities: {
+          impact_analysis: true,
+          recurrence_editor: true,
+          quick_publish: true,
+          demo_scenarios: true,
+        },
+        scenarios: [],
+      }),
+    } as Response);
   });
 
   afterEach(() => {

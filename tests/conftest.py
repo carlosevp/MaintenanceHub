@@ -16,6 +16,8 @@ os.environ["AUTH_MODE"] = "local_dev"
 os.environ["SEED_DEMO_DATA"] = "false"
 os.environ["JWT_SECRET"] = "test-secret"
 os.environ["DATABASE_URL"] = "sqlite://"
+# Full capability matrix for API regression. Demo defaults to essentials separately.
+os.environ["EXPERIENCE_PROFILE"] = "enterprise"
 
 from maintenancehub_api.auth.security import hash_password  # noqa: E402
 from maintenancehub_api.db import Base, get_db  # noqa: E402
@@ -83,10 +85,13 @@ def _reset_settings_env():
     os.environ["OIDC_MOCK"] = "false"
     os.environ["LDAP_MOCK"] = "false"
     os.environ["SERVICENOW_ENABLED"] = "false"
+    # Full matrix for regression; M17 tests monkeypatch Essentials/Team explicitly.
+    os.environ["EXPERIENCE_PROFILE"] = "enterprise"
     from maintenancehub_api.config import get_settings
 
     get_settings.cache_clear()
     yield
+    os.environ["EXPERIENCE_PROFILE"] = "enterprise"
     get_settings.cache_clear()
 
 

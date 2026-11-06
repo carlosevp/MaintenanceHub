@@ -62,8 +62,8 @@ export function Layout() {
                 to="/catalog"
                 className={({ isActive }) =>
                   clsx(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition",
-                    isActive ? "bg-ink text-accent-fg" : "text-ink-faint hover:bg-accent-soft hover:text-ink",
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                    isActive ? "bg-ink text-accent-fg" : "text-ink-muted hover:bg-accent-soft hover:text-ink",
                   )
                 }
               >

@@ -18,7 +18,7 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 | **M14 Impact analysis** | **Implemented + hardened**: dependency reverse traversal, publisher-scoped preview, confirm with revision tokens, etc. Advisory only; graph quality depends on CMDB/manual edges. |
 | **M15 Admin workspace** | **Implemented**: `/admin` Overview, Apps/Deps, SN/CMDB, Notifications, Users/Permissions, Jobs/Delivery, Audit. API authz required. Secrets are env/OpenShift only (status/redaction; no secret editor). See [administration.md](./administration.md). |
 | **M16 Consumer & publisher UX** | **Implemented**: My Applications homepage; calendar day/week/month/agenda + filters; four-step publisher wizard (Details→Impact→Audience→Review) with drafts/templates/Quick Publish; subscription app/env/event targets + multi-reminders; clearer email/bridge templates; authenticated shareable status URLs (`/status/apps/...`, `/status/events/...`, `/status/scheduled/...`). |
-| **M17 UX redesign** | **Implemented**: Modern Operational Minimalism design tokens (light/dark); Overview / Calendar / My Alerts IA; experience profiles Essentials\|Team\|Enterprise via centralized `EXPERIENCE_PROFILE` registry; `make demo` zero-config local bootstrap. |
+| **M17 UX redesign** | **Implemented**: Modern Operational Minimalism design tokens (light/dark); Overview / Calendar / My Alerts IA; experience profiles Essentials\|Team\|Enterprise via centralized `EXPERIENCE_PROFILE` registry (fail-closed unknown profiles; presentation scenarios ≠ API unlock); `make demo` defaults to Essentials; `make demo-team` / `make demo-enterprise`; notification capture dir for demos. |
 | **Native mobile / Redis / RabbitMQ** | Out of scope. |
 
 ## Recurrence / occurrence caveats (known)
@@ -36,8 +36,10 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 - **M16 ICS:** Feed refresh is client poll interval only — not push-realtime.
 - **M16 publisher reminders:** Wizard reminder offsets document publisher expectation; actual reminder delivery is owned by consumer subscriptions.
 - **M16 drafts:** Local browser draft only (not server-persisted drafts).
-- **M17 profiles:** Profile is deploy-time (`EXPERIENCE_PROFILE`); no in-app feature-admin UI. Essentials omits impact analysis, recurrence editor, admin/SN/CSV. Switching profiles requires restart/redeploy.
-- **M17 demo:** `make demo` is local_dev only and refuses staging/production environments.
+- **M17 profiles:** Profile is deploy-time (`EXPERIENCE_PROFILE`); no in-app feature-admin UI. Essentials omits impact analysis, recurrence editor, admin/SN/CSV. Switching profiles requires restart/redeploy. Demo story selection is presentation-only.
+- **M17 demo:** `make demo` defaults to Essentials; local_dev only and refuses staging/production. Notifications are captured to `data/notification-capture/` when `MH_NOTIFICATION_CAPTURE_DIR` is set (SMTP remains off).
+- **M17 Compose gap:** Docker is not available in all agent environments; integrated Compose (Postgres multi-replica) was **not** exercised in the M17 refine pass. Use SQLite via `make demo*` locally, or `make compose-up` where Docker exists.
+- **M17 a11y remaining:** Login + primary chrome covered by axe-core in vitest; some dense admin tables and calendar month grids may still need further keyboard/landmark polish at 200% zoom. Color tokens target WCAG 2.2 AA for body text; decorative faint labels on status chips remain medium risk.
 
 ## Permanent non-goals
 

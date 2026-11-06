@@ -1,4 +1,4 @@
-.PHONY: install api web worker migrate seed test lint demo demo-essentials demo-stop banner-test web-test test-all compose-up compose-down compose-reset
+.PHONY: install api web worker migrate seed test lint demo demo-essentials demo-team demo-enterprise demo-stop banner-test web-test test-all compose-up compose-down compose-reset
 
 install:
 	python3 -m venv .venv
@@ -62,11 +62,18 @@ compose-down:
 compose-reset:
 	docker compose down -v
 
+# Default demo = Essentials (synthetic data, local auth, captured notifications)
 demo:
-	@./scripts/demo.sh
+	@EXPERIENCE_PROFILE=essentials ./scripts/demo.sh
 
 demo-essentials:
 	@EXPERIENCE_PROFILE=essentials ./scripts/demo.sh
+
+demo-team:
+	@EXPERIENCE_PROFILE=team ./scripts/demo.sh
+
+demo-enterprise:
+	@EXPERIENCE_PROFILE=enterprise ./scripts/demo.sh
 
 demo-stop:
 	@-kill $$(cat data/demo-api.pid data/demo-worker.pid data/demo-web.pid 2>/dev/null) 2>/dev/null || true

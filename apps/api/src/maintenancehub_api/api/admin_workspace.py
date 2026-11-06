@@ -32,7 +32,16 @@ from maintenancehub_api.models import (
     UserRole,
 )
 
-router = APIRouter(prefix="/admin", tags=["admin-workspace"])
+def _require_admin_workspace() -> None:
+    """Router-level gate — Essentials/Team fail closed (no silent Enterprise admin)."""
+    require_capability("admin_workspace")
+
+
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin-workspace"],
+    dependencies=[Depends(_require_admin_workspace)],
+)
 _ADMIN = RoleName.platform_administrator.value
 
 
@@ -42,7 +51,6 @@ def admin_overview(
     _: AuthUser = Depends(require_roles(_ADMIN)),
 ) -> dict[str, Any]:
     """Summary dashboard for the administration workspace."""
-    require_capability("admin_workspace")
     s = get_settings()
     now = datetime.now(timezone.utc)
     jobs_by_status = {

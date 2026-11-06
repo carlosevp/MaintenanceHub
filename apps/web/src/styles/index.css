@@ -18,8 +18,8 @@
   --mh-border: #d9d2c8;
   --mh-border-strong: #c4bbb0;
   --mh-ink: #1a2332;
-  --mh-ink-muted: #5c6575;
-  --mh-ink-faint: #8a8790;
+  --mh-ink-muted: #4a5568;
+  --mh-ink-faint: #5c6575;
   --mh-accent: #5c6b8a;
   --mh-accent-soft: #e4e8f0;
   --mh-accent-strong: #3f4d6a;
@@ -43,8 +43,8 @@
   --mh-border: #2c3444;
   --mh-border-strong: #3d475c;
   --mh-ink: #ebe6df;
-  --mh-ink-muted: #a8a29a;
-  --mh-ink-faint: #7a756e;
+  --mh-ink-muted: #b7b0a6;
+  --mh-ink-faint: #9a948a;
   --mh-accent: #8b98b5;
   --mh-accent-soft: #252c3c;
   --mh-accent-strong: #aeb8cf;
@@ -76,6 +76,28 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@layer utilities {
+  .animate-rise {
+    animation: rise 0.4s ease-out both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-rise {
+      animation: none !important;
+    }
   }
 }
 

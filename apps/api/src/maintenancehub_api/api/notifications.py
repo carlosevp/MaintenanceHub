@@ -55,6 +55,9 @@ def patch_template(
     db: Session = Depends(get_db),
     _: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
 ) -> NotificationTemplate:
+    from maintenancehub_api.api.experience import require_capability
+
+    require_capability("notification_admin")
     ensure_default_templates(db)
     row = db.query(NotificationTemplate).filter(NotificationTemplate.key == key).first()
     if not row:

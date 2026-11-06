@@ -37,6 +37,18 @@ def handle_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, An
 
 
 def handle_sn_poll(db: Session, payload: dict[str, Any]) -> dict[str, Any]:
+    from maintenancehub_api.config import get_settings
+    from maintenancehub_api.domain import experience as exp
+
+    settings = get_settings()
+    if not exp.has_capability(settings.experience_profile, "servicenow"):
+        return {
+            "skipped": True,
+            "reason": (
+                f"servicenow capability disabled for profile "
+                f"{exp.normalize_profile(settings.experience_profile)}"
+            ),
+        }
     fixture = payload.get("fixture_records")
     return run_poll(db, fixture_records=fixture)
 

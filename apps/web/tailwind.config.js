@@ -46,8 +46,24 @@ export default {
         },
       },
       fontFamily: {
-        display: ['"Fraunces"', "Georgia", "serif"],
-        sans: ['"Sora"', "ui-sans-serif", "system-ui", "sans-serif"],
+        display: [
+          "ui-serif",
+          "Iowan Old Style",
+          "Apple Garamond",
+          "Baskerville",
+          "Georgia",
+          "serif",
+        ],
+        sans: [
+          "ui-sans-serif",
+          "system-ui",
+          "-apple-system",
+          "Segoe UI",
+          "Roboto",
+          "Helvetica Neue",
+          "Arial",
+          "sans-serif",
+        ],
       },
       boxShadow: {
         panel: "var(--mh-shadow)",

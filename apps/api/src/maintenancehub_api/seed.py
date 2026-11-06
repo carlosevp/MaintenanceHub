@@ -225,22 +225,27 @@ def seed_demo(db: Session) -> None:
 
     ensure_default_templates(db)
 
-    # Viewer favorites for dashboard demos
+    # Demo favorites — viewer + publisher (Claims INT Essentials story)
     viewer = users["viewer@demo.example.com"]
-    for app_key in ("payments-gateway", "hr-portal"):
-        fav = (
-            db.query(Favorite)
-            .filter(
-                Favorite.user_id == viewer.id,
-                Favorite.application_id == apps[app_key].id,
-            )
-            .first()
-        )
-        if not fav:
-            db.add(Favorite(user_id=viewer.id, application_id=apps[app_key].id))
-    db.commit()
-
     publisher = users["publisher@demo.example.com"]
+    for user, keys in (
+        (viewer, ("payments-gateway", "hr-portal", "claims")),
+        (publisher, ("payments-gateway", "claims")),
+    ):
+        for app_key in keys:
+            if app_key not in apps:
+                continue
+            fav = (
+                db.query(Favorite)
+                .filter(
+                    Favorite.user_id == user.id,
+                    Favorite.application_id == apps[app_key].id,
+                )
+                .first()
+            )
+            if not fav:
+                db.add(Favorite(user_id=user.id, application_id=apps[app_key].id))
+    db.commit()
     # Demo subscription: Payments app, -24h and -1h reminders (SMTP log sink)
     sub = (
         db.query(Subscription)

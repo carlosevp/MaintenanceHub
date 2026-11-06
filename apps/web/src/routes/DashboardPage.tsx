@@ -9,6 +9,8 @@ import {
 import { ApprovalBadge, KindBadge, StatusBadge } from "@/components/StatusBadge";
 import { fmtRange, untilBack } from "@/lib/format";
 import { useAuth } from "@/features/auth/AuthContext";
+import { ScenarioSelector } from "@/components/ScenarioSelector";
+import { useExperience } from "@/features/experience/ExperienceContext";
 
 function EventRow({ event }: { event: MaintenanceEvent }) {
   const isOutage = event.kind === "manual_outage" || event.status === "extended";
@@ -99,11 +101,13 @@ function Section({
 
 export function DashboardPage() {
   const { user } = useAuth();
+  const { activeScenario } = useExperience();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [apps, setApps] = useState<Application[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [search, setSearch] = useState("");
-  const [favoritesOnly, setFavoritesOnly] = useState(true);
+  // Default off so first paint isn't an empty Essentials demo when nothing is starred yet.
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -165,9 +169,14 @@ export function DashboardPage() {
           What’s happening
         </h1>
         <p className="mt-2 text-ink-muted">
-          Active confirmed work and what’s coming for your apps. Status is never guessed from a
-          calendar window alone.
+          Active confirmed work and what’s coming next. Status is never guessed from a calendar
+          window alone.
         </p>
+        {activeScenario && (
+          <p className="mt-2 rounded-md bg-accent-soft px-3 py-2 text-sm text-ink" role="status">
+            Story: <strong>{activeScenario.label}</strong> — {activeScenario.summary}
+          </p>
+        )}
       </div>
 
       <div className="mh-panel flex flex-wrap items-end gap-3 p-4">
@@ -199,11 +208,17 @@ export function DashboardPage() {
         </Link>
       </div>
 
-      <section className="mh-panel p-5" aria-labelledby="my-apps-heading">
-        <h2 id="my-apps-heading" className="font-display text-lg font-semibold">
-          My apps
-        </h2>
-        <p className="text-sm text-ink-muted">Star apps to personalize Overview and alerts.</p>
+      <details className="mh-panel p-4">
+        <summary
+          id="my-apps-heading"
+          className="cursor-pointer list-none font-display text-lg font-semibold text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
+        >
+          My apps{" "}
+          <span className="ml-2 font-sans text-xs font-medium text-ink-muted">
+            ({favorites.length} starred)
+          </span>
+        </summary>
+        <p className="mt-2 text-sm text-ink-muted">Star apps to personalize Overview and alerts.</p>
         <div className="mt-3 flex flex-wrap gap-2">
           {apps.map((a) => {
             const fav = favorites.includes(a.id);
@@ -217,6 +232,7 @@ export function DashboardPage() {
                       : "rounded-md border border-ink-200 bg-surface-raised px-3 py-1 text-xs font-medium text-ink-muted hover:bg-accent-soft"
                   }
                   aria-pressed={fav}
+                  aria-label={`${fav ? "Unstar" : "Star"} ${a.name.replace("[DEMO] ", "")}`}
                   onClick={() => void toggleFavorite(a.id)}
                 >
                   {fav ? "★" : "☆"} {a.name.replace("[DEMO] ", "")}
@@ -233,7 +249,7 @@ export function DashboardPage() {
             );
           })}
         </div>
-      </section>
+      </details>
 
       {loading && <p className="text-sm text-ink-muted">Loading overview…</p>}
       {error && (
@@ -313,6 +329,8 @@ export function DashboardPage() {
           for a minimal flow.
         </p>
       )}
+
+      <ScenarioSelector />
     </div>
   );
 }
