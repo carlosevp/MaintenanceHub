@@ -1,6 +1,6 @@
 # `@maintenancehub/banner`
 
-Lightweight embeddable banner for **confirmed** planned maintenance and manual outages.
+Lightweight embeddable banner for **confirmed** planned maintenance and manual outages (M12/M18).
 
 This is **not** a monitoring probe — it only displays messages published in MaintenanceHub.
 
@@ -12,6 +12,12 @@ This is **not** a monitoring probe — it only displays messages published in Ma
 
 Optional Bearer tokens are for server-side callers (service credential with scope `banner:read`, or publisher/admin JWT).
 
+OpenShift in-cluster callers may use the stable path:
+
+`GET /api/v1/internal/banner?application_key=…&environment_key=…`
+
+(same DTO; prefer service DNS such as `http://maintenancehub-api:8000`).
+
 ## Install / build
 
 ```bash
@@ -21,25 +27,45 @@ npm run build
 ```
 
 ```ts
-import { mountMaintenanceBanner } from "@maintenancehub/banner";
+import { mountMaintenanceBanner, buildEmbedSnippet } from "@maintenancehub/banner";
 import "@maintenancehub/banner/style.css";
 ```
 
-## Usage (browser — no secrets)
+## Dependency-free script tag (Claims INT / legacy hosts)
 
 ```html
+<link rel="stylesheet" href="/vendor/maintenancehub-banner/style.css" />
 <div id="mh-banner-root"></div>
-<script type="module">
-  import { mountMaintenanceBanner } from "./node_modules/@maintenancehub/banner/dist/index.js";
-
-  mountMaintenanceBanner({
-    target: "#mh-banner-root",
-    apiBaseUrl: "https://maintenancehub.example.com",
-    applicationKey: "payments-gateway",
-    environmentKey: "PROD", // optional
-    pollIntervalMs: 60000,
+<script src="/vendor/maintenancehub-banner/embed.js" defer></script>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    window.MaintenanceHubBanner.mount({
+      target: "#mh-banner-root",
+      apiBaseUrl: "https://maintenancehub.example.com",
+      applicationKey: "claims",
+      environmentKey: "INT",
+      theme: "light", // or "dark" | "auto"
+      advanceHours: 24,
+      pollIntervalMs: 60000,
+    });
   });
 </script>
+```
+
+No npm runtime dependencies. Host failures render a soft error; empty results hide the banner.
+
+## TypeScript / ESM package
+
+```ts
+mountMaintenanceBanner({
+  target: "#mh-banner-root",
+  apiBaseUrl: "https://maintenancehub.example.com",
+  applicationKey: "claims",
+  environmentKey: "INT",
+  theme: "auto",
+  advanceHours: 24,
+  pollIntervalMs: 60_000,
+});
 ```
 
 ### Server-side / BFF (optional token)
@@ -48,13 +74,37 @@ import "@maintenancehub/banner/style.css";
 import { fetchBannerMessages } from "@maintenancehub/banner";
 
 const messages = await fetchBannerMessages({
-  apiBaseUrl: "http://localhost:8000",
+  apiBaseUrl: "http://maintenancehub-api:8000",
+  internal: true, // OpenShift-stable path
   accessToken: shortLivedJwt, // never a client_secret
-  applicationKey: "payments-gateway",
+  applicationKey: "claims",
+  environmentKey: "INT",
 });
 ```
 
+## Behaviour
+
+| Rule | Detail |
+|------|--------|
+| Exact app + env | Only confirmed impacts for that pair (incl. confirmed downstream) |
+| No unrelated | Other applications never appear |
+| Status labels | `upcoming` / `in_progress` / `extended` / `verifying` / `outage` |
+| Never approved = outage | `approved_window` is excluded entirely |
+| Advance window | Default 24h (`advance_hours` / `BANNER_ADVANCE_HOURS`) |
+| Dismiss upcoming | localStorage; re-shows when `revision` changes (extend/update) |
+| Active notices | Not dismissible |
+
 ## Public DTO
 
-Only: `id`, `kind`, `title`, `status`, `starts_at`, `ends_at`, `expected_impact`, `approval_state`.  
-Internal notes / descriptions / timeline are **not** exposed.
+Safe fields only: `id`, `event_id`, `kind`, `title`, `status`, `presentation`, `starts_at`, `ends_at`, `expected_impact`, `approval_state`, `revision`, `dismissible`, `occurrence_starts_at`.
+
+Internal notes / descriptions / timeline / secrets are **never** exposed.
+
+## JSON API
+
+```
+GET /api/v1/public/banner?application_key=claims&environment_key=INT&advance_hours=24
+GET /api/v1/internal/banner?application_key=claims&environment_key=INT
+```
+
+Response: `200` JSON array. CORS enabled for configured origins. `Cache-Control: public, max-age=30`. Public path is rate-limited per client IP.

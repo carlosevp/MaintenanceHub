@@ -27,7 +27,8 @@ _CAPABILITIES: dict[str, dict[str, bool]] = {
         "catalog_browse": True,
         "impact_analysis": False,
         "recurrence_editor": False,
-        "banner_embed": False,
+        # Embed screen is part of Essentials Claims INT story (M18).
+        "banner_embed": True,
         "admin_workspace": False,
         "admin_users": False,
         "servicenow": False,
@@ -96,6 +97,18 @@ DEMO_SCENARIOS: list[dict[str, Any]] = [
             "path": "/alerts",
         },
         "requires": [],
+    },
+    {
+        "id": "essentials-claims-int-banner",
+        "label": "Essentials · Claims INT banner",
+        "profile_hint": "essentials",
+        "summary": "Embed MaintenanceHub notices into Claims INT via the public banner API.",
+        "focus": {
+            "application_key": "claims",
+            "environment_key": "INT",
+            "path": "/banner-demo",
+        },
+        "requires": ["banner_embed"],
     },
     {
         "id": "team-weekly-payments",

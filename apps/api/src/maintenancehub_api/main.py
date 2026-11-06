@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from maintenancehub_api.api import (
@@ -134,7 +135,32 @@ def create_app() -> FastAPI:
     app.include_router(status_pages.router, prefix="/api/v1")
     app.include_router(calendar_tokens.router, prefix="/api/v1")
 
+    # Dependency-free embed assets (embed.js + style.css) for host apps.
+    banner_static = _banner_static_dir()
+    if banner_static is not None:
+        app.mount(
+            "/static/banner",
+            StaticFiles(directory=str(banner_static)),
+            name="banner_static",
+        )
+
     return app
+
+
+def _banner_static_dir() -> Path | None:
+    """Prefer built dist/; fall back to package src for local_dev."""
+    here = Path(__file__).resolve()
+    # .../apps/api/src/maintenancehub_api/main.py → repo root
+    candidates = [
+        here.parents[4] / "packages" / "banner" / "dist",
+        here.parents[4] / "packages" / "banner" / "src",
+        Path.cwd() / "packages" / "banner" / "dist",
+        Path.cwd() / "packages" / "banner" / "src",
+    ]
+    for path in candidates:
+        if path.is_dir() and (path / "embed.js").exists():
+            return path
+    return None
 
 
 app = create_app()
