@@ -1,0 +1,90 @@
+# MaintenanceHub API — non-root, multi-replica (Postgres required)
+apiVersion: v1
+kind: Service
+metadata:
+  name: maintenancehub-api
+  labels:
+    app: maintenancehub-api
+spec:
+  selector:
+    app: maintenancehub-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintenancehub-api
+  labels:
+    app: maintenancehub-api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: maintenancehub-api
+  template:
+    metadata:
+      labels:
+        app: maintenancehub-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: image-registry.openshift-image-registry.svc:5000/maintenancehub/api:latest
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8000
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: false
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          envFrom:
+            - configMapRef:
+                name: maintenancehub-config
+            - secretRef:
+                name: maintenancehub-secrets
+          env:
+            - name: SEED_DEMO_DATA
+              value: "false"
+---
+# Optional edge route — adjust hostname for your cluster
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: maintenancehub-api
+spec:
+  to:
+    kind: Service
+    name: maintenancehub-api
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

@@ -1,0 +1,49 @@
+# MaintenanceHub worker — DB outbox/lease; scale with Postgres (not SQLite)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintenancehub-worker
+  labels:
+    app: maintenancehub-worker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: maintenancehub-worker
+  template:
+    metadata:
+      labels:
+        app: maintenancehub-worker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: image-registry.openshift-image-registry.svc:5000/maintenancehub/worker:latest
+          imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "500m"
+              memory: 512Mi
+          envFrom:
+            - configMapRef:
+                name: maintenancehub-config
+            - secretRef:
+                name: maintenancehub-secrets
+          env:
+            - name: WORKER_POLL_SECONDS
+              value: "5"
+            - name: WORKER_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name

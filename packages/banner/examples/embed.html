@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MaintenanceHub banner example</title>
+    <link rel="stylesheet" href="../dist/style.css" />
+  </head>
+  <body>
+    <h1>Host application</h1>
+    <p>The banner below loads confirmed maintenance/outage notices only.</p>
+    <div id="mh-banner-root"></div>
+    <script type="module">
+      import { mountMaintenanceBanner } from "../dist/index.js";
+
+      const params = new URLSearchParams(location.search);
+      // No accessToken needed for public DTO — never put client_secret in HTML.
+      mountMaintenanceBanner({
+        target: "#mh-banner-root",
+        apiBaseUrl: params.get("api") || "http://localhost:8000",
+        applicationKey: params.get("app") || "payments-gateway",
+        environmentKey: params.get("env") || "PROD",
+        pollIntervalMs: 60_000,
+      });
+    </script>
+  </body>
+</html>

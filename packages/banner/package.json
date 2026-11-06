@@ -1,0 +1,31 @@
+{
+  "name": "@maintenancehub/banner",
+  "version": "0.1.0",
+  "description": "Lightweight MaintenanceHub maintenance/outage banner for embedding in internal apps",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && cp src/style.css dist/style.css",
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.5"
+  },
+  "license": "UNLICENSED",
+  "private": true
+}
