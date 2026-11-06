@@ -63,4 +63,4 @@ API returns ISO-8601; UI formats via `Intl` (`formatWindowIntl`).
 | In-cluster | `http://maintenancehub-api:8000/api/v1/internal/banner` (BFF only) |
 | Local | `http://127.0.0.1:8000` — demos only |
 
-See `docs/banner-api.md` for CORS, CSP, filtering, and multi-notice policy.
+See [`docs/banner-api.md`](../../docs/banner-api.md) and [`docs/banner-developer-guide.md`](../../docs/banner-developer-guide.md) for CORS, CSP, filtering, multi-notice policy, OpenShift routes, and the **`embed.js` ↔ TypeScript hand-sync** limitation (no automatic IIFE compile — update both files).

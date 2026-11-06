@@ -32,9 +32,11 @@ def test_experience_endpoint_essentials_scenarios(client, monkeypatch):
     assert body["capabilities"]["impact_analysis"] is False
     assert body["capabilities"]["admin_workspace"] is False
     assert body["capabilities"]["servicenow"] is False
-    assert len(body["scenarios"]) == 3
+    assert len(body["scenarios"]) == 4
     by_id = {s["id"]: s for s in body["scenarios"]}
     assert by_id["essentials-claims-int"]["available"] is True
+    assert by_id["essentials-claims-int-banner"]["available"] is True
+    assert body["capabilities"]["banner_embed"] is True
     assert by_id["team-weekly-payments"]["available"] is False
     assert by_id["advanced-oracle-nonprod"]["available"] is False
     assert "cannot unlock" in body["note"].lower()
