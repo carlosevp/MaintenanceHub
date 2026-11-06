@@ -73,6 +73,15 @@ def test_manual_dependency_preserved(client):
     a = next(a for a in apps if "payments" in a["key"] or a["name"].startswith("Payments"))
     b = next(a for a in apps if "hr" in a["key"] or a["name"].startswith("HR"))
 
+    # Publisher needs an application grant for cross-app dependency writes
+    publisher_id = client.get("/api/v1/auth/me", headers=pub).json()["id"]
+    grant = client.post(
+        "/api/v1/admin/grants",
+        headers=admin,
+        json={"user_id": publisher_id, "application_id": a["id"], "role": "publisher"},
+    )
+    assert grant.status_code == 201, grant.text
+
     dep = client.post(
         f"/api/v1/applications/{a['id']}/dependencies",
         headers=pub,

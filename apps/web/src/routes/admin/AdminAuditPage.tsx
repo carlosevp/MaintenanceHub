@@ -16,11 +16,14 @@ export function AdminAuditPage() {
   const [q, setQ] = useState("");
   const [action, setAction] = useState("");
   const [entityType, setEntityType] = useState("");
+  const [offset, setOffset] = useState(0);
+  const pageSize = 50;
   const [error, setError] = useState<string | null>(null);
 
-  async function reload() {
+  async function reload(nextOffset = offset) {
     const params = new URLSearchParams();
-    params.set("limit", "100");
+    params.set("limit", String(pageSize));
+    params.set("offset", String(nextOffset));
     if (q) params.set("q", q);
     if (action) params.set("action", action);
     if (entityType) params.set("entity_type", entityType);
@@ -60,7 +63,14 @@ export function AdminAuditPage() {
             value={entityType}
             onChange={(e) => setEntityType(e.target.value)}
           />
-          <button type="button" className="mh-btn-ghost" onClick={() => void reload()}>
+          <button
+            type="button"
+            className="mh-btn-ghost"
+            onClick={() => {
+              setOffset(0);
+              void reload(0);
+            }}
+          >
             Search
           </button>
         </div>
@@ -89,6 +99,33 @@ export function AdminAuditPage() {
             </li>
           ))}
         </ul>
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            className="mh-btn-ghost text-xs"
+            disabled={offset === 0}
+            onClick={() => {
+              const next = Math.max(0, offset - pageSize);
+              setOffset(next);
+              void reload(next);
+            }}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            className="mh-btn-ghost text-xs"
+            disabled={rows.length < pageSize}
+            onClick={() => {
+              const next = offset + pageSize;
+              setOffset(next);
+              void reload(next);
+            }}
+          >
+            Next
+          </button>
+          <span className="self-center text-xs text-ink-500">offset {offset}</span>
+        </div>
       </section>
     </div>
   );

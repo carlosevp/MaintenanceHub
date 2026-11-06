@@ -276,6 +276,9 @@ def commit_import(db: Session, job: CsvImportJob) -> dict[str, Any]:
             )
             rel_created += 1
 
+    import_mode = (job.options or {}).get("import_mode", "partial")
+    if import_mode not in {"partial", "full"}:
+        import_mode = "partial"
     summary = {
         "created": created,
         "updated": updated,
@@ -284,6 +287,13 @@ def commit_import(db: Session, job: CsvImportJob) -> dict[str, Any]:
         "relationships_skipped": rel_skipped,
         "errors": errors[:50],
         "overwrite_manual_dependencies": overwrite_manual,
+        "import_mode": import_mode,
+        # Absences are never deleted — even for import_mode=full in v1.
+        "absences_deleted": 0,
+        "absence_policy": (
+            "never_delete_missing_edges — partial CSV absences are non-destructive; "
+            "full-snapshot deletion remains unsupported"
+        ),
     }
     job.result_summary = summary
     job.status = "committed"

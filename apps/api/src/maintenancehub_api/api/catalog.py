@@ -277,10 +277,14 @@ def create_dependency(
     app_id: str,
     body: DependencyCreate,
     db: Session = Depends(get_db),
-    _: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
+    user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
 ) -> Dependency:
     if not db.get(Application, app_id):
         raise HTTPException(status_code=404, detail="Application not found")
+    from maintenancehub_api.domain.authz import ensure_app_grants
+
+    # Cross-app: publishers need a grant on the consumer application.
+    ensure_app_grants(db, user, [app_id], action="create dependency for")
     if body.to_type == "application" and body.to_id == app_id:
         raise HTTPException(
             status_code=400,

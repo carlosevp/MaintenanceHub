@@ -773,6 +773,8 @@ class Job(Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_job_idempotency"),
         Index("ix_jobs_run_status", "run_at", "status"),
+        Index("ix_jobs_status_created", "status", "created_at"),
+        Index("ix_jobs_type_created", "job_type", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
@@ -812,7 +814,10 @@ class OutboxEvent(Base):
 
 class NotificationDelivery(Base):
     __tablename__ = "notification_deliveries"
-    __table_args__ = (UniqueConstraint("idempotency_key", name="uq_delivery_idempotency"),)
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_delivery_idempotency"),
+        Index("ix_notification_deliveries_status_created", "status", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     idempotency_key: Mapped[str] = mapped_column(String(400), nullable=False)
@@ -843,6 +848,11 @@ class NotificationDelivery(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("ix_audit_log_at", "at"),
+        Index("ix_audit_log_action_at", "action", "at"),
+        Index("ix_audit_log_entity", "entity_type", "entity_id"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     actor_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)

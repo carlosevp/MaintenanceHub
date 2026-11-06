@@ -1,6 +1,6 @@
 # MaintenanceHub implementation audit
 
-**Branch audited:** `cursor/m15-admin-workspace-04a5` (M15 Enterprise Administration Workspace on hardened PR #9 / `cursor/m14-impact-preview-6e6d` @ `7de5b50`)  
+**Branch audited:** `cursor/m15-admin-workspace-04a5` (M15 Enterprise Administration Workspace + finalize harden on PR #10; base hardened PR #9 / `cursor/m14-impact-preview-6e6d` @ `7de5b50`)  
 **Sources of truth:** Project store product-brief / PRD / ADRs / data-model / api-contracts / milestone-plan; repo `docs/LIMITATIONS.md`, `docs/administration.md`; actual source (not class existence alone).  
 **Date:** 2026-11-06
 
@@ -8,7 +8,7 @@
 
 MaintenanceHub delivers a working **communication** stack for planned maintenance and manual outages (catalog → schedule → dashboard/calendar → subscriptions/SMTP/bridge → ICS → SN poll/CSV → banner → M3b recurrence → sparse occurrence lifecycle → M14 impact analysis → **M15 Administration workspace**). It is **not** a monitoring product.
 
-**M15** adds a polished `/admin` UI (Overview, Apps/Dependencies, ServiceNow & CMDB, Notifications, Users/Permissions, Jobs/Delivery, Audit) gated by `platform_administrator` in the **API** (not nav alone). Minimal new APIs: overview, secrets-status (no secret values), users, grants CRUD, global dependency create/delete, infra create, delivery diagnostics; plus role-map delete, credential revoke, searchable audit filters, and safe job retry that refuses already-sent deliveries.
+**M15** adds a polished `/admin` UI gated by `platform_administrator` in the **API**. Finalize harden covers: full admin GET RBAC matrix vs publishers; service-cred one-time secret / rotate / revoke / audit redaction; concurrent-safe job retry (`FOR UPDATE`) with UNCERTAIN SMTP hand-off refusal; SN dry-run vs poll; non-destructive CSV (`absences_deleted: 0`); job/audit/delivery `limit`+`offset` + indexes; secrets-status `runtime_editable` vs `deployment_only`; catalog dependency writes require application grants for non-admins.
 
 ---
 
@@ -65,10 +65,11 @@ See [administration.md](./administration.md). **UI/API:** deps, infra create, CS
 
 | Check | Command / action | Result |
 |-------|------------------|--------|
-| Full pytest (+ Postgres when available) | `make test` / `pytest tests -q` | **125 passed** |
+| Full pytest (+ Postgres when available) | `make test` / `pytest tests -q` | **134 passed** |
 | Web vitest + production build | `cd apps/web && npm test && npm run build` | **16 passed**, build OK |
 | Lint | `make lint` | **All checks passed** |
 | Admin demo | Login `admin@demo.example.com` / `password123` → **Admin** nav | Workspace sections load; publisher denied by API |
+| M15 finalize | RBAC matrix, creds, uncertain retry, CSV absence policy, pagination | `test_admin_workspace_harden.py` |
 
 Local: `make install && make migrate && make api` / `make worker` / `make web`.  
 Compose: `make compose-up` → http://localhost:8080.

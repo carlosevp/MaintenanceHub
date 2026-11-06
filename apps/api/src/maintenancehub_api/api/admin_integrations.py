@@ -297,10 +297,19 @@ def commit_csv(
 
 @router.get("/admin/imports")
 def list_imports(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    kind: str | None = None,
+    status: str | None = None,
     db: Session = Depends(get_db),
     _: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
 ) -> list[dict[str, Any]]:
-    rows = db.query(CsvImportJob).order_by(CsvImportJob.created_at.desc()).limit(50).all()
+    q = db.query(CsvImportJob)
+    if kind:
+        q = q.filter(CsvImportJob.kind == kind)
+    if status:
+        q = q.filter(CsvImportJob.status == status)
+    rows = q.order_by(CsvImportJob.created_at.desc()).offset(offset).limit(limit).all()
     return [
         {
             "id": r.id,
@@ -310,6 +319,7 @@ def list_imports(
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "committed_at": r.committed_at.isoformat() if r.committed_at else None,
             "result_summary": r.result_summary,
+            "import_mode": (r.options or {}).get("import_mode", "partial"),
         }
         for r in rows
     ]
@@ -523,6 +533,7 @@ def revoke_service_cred(
 @router.get("/admin/audit")
 def list_audit(
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     q: str | None = None,
     action: str | None = None,
     entity_type: str | None = None,
@@ -530,6 +541,8 @@ def list_audit(
     db: Session = Depends(get_db),
     _: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
 ) -> list[dict[str, Any]]:
+    from sqlalchemy import or_
+
     query = db.query(AuditLog)
     if action:
         query = query.filter(AuditLog.action.ilike(f"%{action}%"))
@@ -537,10 +550,18 @@ def list_audit(
         query = query.filter(AuditLog.entity_type == entity_type)
     if actor_id:
         query = query.filter(AuditLog.actor_id == actor_id)
-    rows = query.order_by(AuditLog.at.desc()).limit(limit).all()
-    out: list[dict[str, Any]] = []
-    for r in rows:
-        item = {
+    if q:
+        like = f"%{q}%"
+        query = query.filter(
+            or_(
+                AuditLog.action.ilike(like),
+                AuditLog.entity_type.ilike(like),
+                AuditLog.entity_id.ilike(like),
+            )
+        )
+    rows = query.order_by(AuditLog.at.desc()).offset(offset).limit(limit).all()
+    return [
+        {
             "id": r.id,
             "actor_id": r.actor_id,
             "action": r.action,
@@ -549,12 +570,8 @@ def list_audit(
             "summary": r.summary,
             "at": r.at.isoformat() if r.at else None,
         }
-        if q:
-            blob = f"{r.action}:{r.entity_type}:{r.entity_id}:{r.summary}"
-            if q.lower() not in blob.lower():
-                continue
-        out.append(item)
-    return out
+        for r in rows
+    ]
 
 
 # Banner API moved to api/banner.py (M12)

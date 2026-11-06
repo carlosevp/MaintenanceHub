@@ -81,9 +81,24 @@ export function AdminOverviewPage() {
       <section className="mh-panel p-6">
         <h2 className="font-display text-xl font-semibold">Secrets & deployment configuration</h2>
         <p className="mt-2 text-sm text-ink-700">{String(secrets.deployment_note)}</p>
-        <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
-          <strong>OpenShift / env only</strong> — these cannot be edited in the UI:{" "}
-          {openshift.join(", ")}.
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div className="rounded-lg border border-teal-200 bg-teal-50/70 px-4 py-3 text-sm text-teal-950">
+            <strong>Runtime-editable (UI/API)</strong>
+            <ul className="mt-2 list-inside list-disc text-xs">
+              {((secrets.runtime_editable as string[]) || []).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-950">
+            <strong>OpenShift Secret / deploy-only</strong>
+            <p className="mt-1 text-xs">Never returned as values: {openshift.join(", ")}</p>
+            <ul className="mt-2 list-inside list-disc text-xs">
+              {((secrets.deployment_only as string[]) || []).slice(0, 12).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
         </div>
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {(["smtp", "bridge", "servicenow", "auth"] as const).map((key) => {

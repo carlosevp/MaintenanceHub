@@ -19,6 +19,7 @@ def list_jobs(
     status: str | None = None,
     job_type: str | None = None,
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     _: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
 ) -> list[dict]:
@@ -27,7 +28,7 @@ def list_jobs(
         q = q.filter(Job.status == JobStatus(status))
     if job_type:
         q = q.filter(Job.job_type == job_type)
-    rows = q.order_by(Job.created_at.desc()).limit(limit).all()
+    rows = q.order_by(Job.created_at.desc()).offset(offset).limit(limit).all()
     return [
         {
             "id": j.id,
@@ -44,14 +45,41 @@ def list_jobs(
     ]
 
 
+def _delivery_blocks_retry(delivery: NotificationDelivery) -> str | None:
+    """Return a 409 detail if retry would risk a duplicate outbound send."""
+    if delivery.status == DeliveryStatus.sent:
+        if delivery.last_error and str(delivery.last_error).startswith("UNCERTAIN:"):
+            return (
+                "Delivery marked UNCERTAIN (SMTP accepted; response lost) — "
+                "refusing retry to prevent duplicate notification"
+            )
+        return (
+            "Delivery already sent — refusing retry to prevent duplicate "
+            "notification (idempotency)"
+        )
+    if delivery.status == DeliveryStatus.sending:
+        return (
+            "Delivery is mid-send (uncertain outcome) — refusing retry to "
+            "prevent duplicate notification; wait for worker completion or "
+            "mark failed only after operator review"
+        )
+    return None
+
+
 @router.post("/{job_id}/retry", response_model=JobOut)
 def retry_job(
     job_id: str,
     db: Session = Depends(get_db),
     user: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
 ) -> Job:
-    """Safe retry: only failed/dead jobs; notify sends skip already-sent deliveries."""
-    job = db.get(Job, job_id)
+    """Safe retry: only failed/dead jobs; concurrent-safe; notify sends are idempotent."""
+    # Lock the row so concurrent admin retries cannot both requeue.
+    job = (
+        db.query(Job)
+        .filter(Job.id == job_id)
+        .with_for_update()
+        .first()
+    )
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     if job.status not in {JobStatus.failed, JobStatus.dead}:
@@ -59,23 +87,22 @@ def retry_job(
             status_code=409, detail=f"Cannot retry job in status {job.status.value}"
         )
 
-    # Idempotent notify path: if the linked delivery already succeeded, refuse requeue
-    # so unrestricted retries cannot duplicate outbound mail.
     if job.job_type in {"notify_send", "notify_reminder"} and isinstance(job.payload, dict):
         delivery_id = job.payload.get("delivery_id")
         if delivery_id:
-            delivery = db.get(NotificationDelivery, delivery_id)
-            if delivery and delivery.status == DeliveryStatus.sent:
-                raise HTTPException(
-                    status_code=409,
-                    detail=(
-                        "Delivery already sent — refusing retry to prevent duplicate "
-                        "notification (idempotency)"
-                    ),
-                )
-            if delivery and delivery.status in {DeliveryStatus.failed, DeliveryStatus.dead}:
-                delivery.status = DeliveryStatus.pending
-                delivery.next_attempt_at = datetime.now(timezone.utc)
+            delivery = (
+                db.query(NotificationDelivery)
+                .filter(NotificationDelivery.id == delivery_id)
+                .with_for_update()
+                .first()
+            )
+            if delivery:
+                block = _delivery_blocks_retry(delivery)
+                if block:
+                    raise HTTPException(status_code=409, detail=block)
+                if delivery.status in {DeliveryStatus.failed, DeliveryStatus.dead}:
+                    delivery.status = DeliveryStatus.pending
+                    delivery.next_attempt_at = datetime.now(timezone.utc)
 
     job.status = JobStatus.queued
     job.leased_by = None

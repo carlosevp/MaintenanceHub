@@ -132,6 +132,36 @@ def secrets_status(
             "or OpenShift Secrets. This API never returns raw secret values and does not "
             "provide an arbitrary secret editor."
         ),
+        "runtime_editable": [
+            "notification templates (subject/body)",
+            "application grants and group role mappings",
+            "manual dependencies and infra components",
+            "CSV import jobs",
+            "ServiceNow unmatched resolve / poll-now enqueue",
+            "service credentials (generate/rotate/revoke; secret shown once)",
+            "job retry for failed/dead jobs",
+        ],
+        "deployment_only": [
+            "SMTP_HOST",
+            "SMTP_PORT",
+            "SMTP_USER",
+            "SMTP_PASSWORD",
+            "SMTP_FROM",
+            "SMTP_ENABLED",
+            "BRIDGE_ENABLED",
+            "BRIDGE_MAILBOX",
+            "BRIDGE_SUBJECT_TEMPLATE",
+            "SERVICENOW_ENABLED",
+            "SERVICENOW_INSTANCE_URL",
+            "SERVICENOW_USERNAME",
+            "SERVICENOW_PASSWORD",
+            "SERVICENOW_QUERY",
+            "SERVICENOW_POLL_INTERVAL_SECONDS",
+            "AUTH_MODE",
+            "OIDC_*",
+            "LDAP_*",
+            "JWT_SECRET",
+        ],
         "openshift_only": [
             "SMTP_PASSWORD",
             "SERVICENOW_PASSWORD",
@@ -155,7 +185,7 @@ def secrets_status(
             "ui_editable": False,
             "note": (
                 "Teams destinations use the Power Automate email bridge only — "
-                "no Graph/Teams APIs"
+                "no Graph/Teams APIs. SMTP acceptance ≠ confirmed Teams delivery."
             ),
         },
         "servicenow": {
@@ -499,6 +529,7 @@ def list_deliveries_admin(
     destination: str | None = None,
     event_id: str | None = None,
     limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     _: AuthUser = Depends(require_roles(_ADMIN)),
 ) -> list[dict[str, Any]]:
@@ -509,7 +540,9 @@ def list_deliveries_admin(
         q = q.filter(NotificationDelivery.destination.ilike(f"%{destination}%"))
     if event_id:
         q = q.filter(NotificationDelivery.event_id == event_id)
-    rows = q.order_by(NotificationDelivery.created_at.desc()).limit(limit).all()
+    rows = (
+        q.order_by(NotificationDelivery.created_at.desc()).offset(offset).limit(limit).all()
+    )
     return [
         {
             "id": r.id,

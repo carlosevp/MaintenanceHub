@@ -31,15 +31,22 @@ export function AdminJobsPage() {
   const [jobStatus, setJobStatus] = useState("");
   const [delStatus, setDelStatus] = useState("");
   const [dest, setDest] = useState("");
+  const [jobOffset, setJobOffset] = useState(0);
+  const [delOffset, setDelOffset] = useState(0);
+  const pageSize = 25;
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  async function reload() {
+  async function reload(nextJobOffset = jobOffset, nextDelOffset = delOffset) {
     const jp = new URLSearchParams();
     if (jobStatus) jp.set("status", jobStatus);
+    jp.set("limit", String(pageSize));
+    jp.set("offset", String(nextJobOffset));
     const dp = new URLSearchParams();
     if (delStatus) dp.set("status", delStatus);
     if (dest) dp.set("destination", dest);
+    dp.set("limit", String(pageSize));
+    dp.set("offset", String(nextDelOffset));
     const [j, d] = await Promise.all([api.adminJobs(jp), api.adminDeliveries(dp)]);
     setJobs(j);
     setDeliveries(d);
@@ -83,7 +90,14 @@ export function AdminJobsPage() {
               <option value="failed">failed</option>
               <option value="dead">dead</option>
             </select>
-            <button type="button" className="mh-btn-ghost" onClick={() => void reload()}>
+            <button
+              type="button"
+              className="mh-btn-ghost"
+              onClick={() => {
+                setJobOffset(0);
+                void reload(0, delOffset);
+              }}
+            >
               Refresh
             </button>
           </div>
@@ -111,6 +125,33 @@ export function AdminJobsPage() {
             </li>
           ))}
         </ul>
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            className="mh-btn-ghost text-xs"
+            disabled={jobOffset === 0}
+            onClick={() => {
+              const next = Math.max(0, jobOffset - pageSize);
+              setJobOffset(next);
+              void reload(next, delOffset);
+            }}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            className="mh-btn-ghost text-xs"
+            disabled={jobs.length < pageSize}
+            onClick={() => {
+              const next = jobOffset + pageSize;
+              setJobOffset(next);
+              void reload(next, delOffset);
+            }}
+          >
+            Next
+          </button>
+          <span className="self-center text-xs text-ink-500">offset {jobOffset}</span>
+        </div>
       </section>
 
       <section className="mh-panel p-6">
@@ -133,7 +174,14 @@ export function AdminJobsPage() {
               value={dest}
               onChange={(e) => setDest(e.target.value)}
             />
-            <button type="button" className="mh-btn-ghost" onClick={() => void reload()}>
+            <button
+              type="button"
+              className="mh-btn-ghost"
+              onClick={() => {
+                setDelOffset(0);
+                void reload(jobOffset, 0);
+              }}
+            >
               Filter
             </button>
           </div>
@@ -150,9 +198,41 @@ export function AdminJobsPage() {
                 {d.event_id ? ` · event ${d.event_id}` : ""}
               </div>
               {d.last_error && <div className="mt-1 text-xs text-red-700">{d.last_error}</div>}
+              {d.last_error?.startsWith("UNCERTAIN:") && (
+                <div className="mt-1 text-xs text-amber-800">
+                  SMTP may have accepted this message — retry is blocked to avoid duplicates.
+                </div>
+              )}
             </li>
           ))}
         </ul>
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            className="mh-btn-ghost text-xs"
+            disabled={delOffset === 0}
+            onClick={() => {
+              const next = Math.max(0, delOffset - pageSize);
+              setDelOffset(next);
+              void reload(jobOffset, next);
+            }}
+          >
+            Previous
+          </button>
+          <button
+            type="button"
+            className="mh-btn-ghost text-xs"
+            disabled={deliveries.length < pageSize}
+            onClick={() => {
+              const next = delOffset + pageSize;
+              setDelOffset(next);
+              void reload(jobOffset, next);
+            }}
+          >
+            Next
+          </button>
+          <span className="self-center text-xs text-ink-500">offset {delOffset}</span>
+        </div>
       </section>
     </div>
   );

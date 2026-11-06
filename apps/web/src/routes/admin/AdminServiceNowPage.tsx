@@ -209,7 +209,8 @@ export function AdminServiceNowPage() {
         <h2 className="font-display text-xl font-semibold">CMDB CSV import</h2>
         <p className="mt-1 text-sm text-ink-600">
           Upload → preview → commit. Use kind <code>cmdb_ci</code> or <code>ci_relationships</code>.
-          Partial exports do <strong>not</strong> delete absent relationships.
+          Imports are <strong>partial by default</strong> — absences never delete existing
+          relationships (including when labeled full; snapshot deletion remains unsupported).
         </p>
         <form className="mt-4 flex flex-wrap items-end gap-3" onSubmit={onUpload}>
           <div>

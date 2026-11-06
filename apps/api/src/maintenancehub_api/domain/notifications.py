@@ -749,10 +749,12 @@ def send_delivery(db: Session, delivery_id: str) -> NotificationDelivery:
         )
 
     if result.ok:
+        # SMTP acceptance is recorded as sent. Uncertain hand-off (accepted but
+        # confirmation lost) still counts as sent so admin retry cannot duplicate.
         delivery.status = DeliveryStatus.sent
         delivery.provider_message_id = result.provider_message_id
         delivery.channel = result.channel
-        delivery.last_error = None
+        delivery.last_error = result.error if getattr(result, "uncertain", False) else None
     else:
         if delivery.attempt_count >= settings.delivery_max_attempts:
             delivery.status = DeliveryStatus.dead
