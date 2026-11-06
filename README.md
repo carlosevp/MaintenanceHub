@@ -4,7 +4,7 @@ Internal **Maintenance & Outage Communication Platform**.
 
 This is **not** a monitoring product. Status is published by people (planned maintenance, extensions, manual outages). Platform `/healthz` and `/readyz` exist only for pod liveness/readiness.
 
-Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M13** including **M3b recurrence** (see [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for remaining gaps).
+Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M16** (catalog through consumer/publisher UX, including M3b recurrence, occurrence lifecycle, impact analysis, admin workspace). See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for remaining gaps.
 
 ## Stack
 
@@ -128,6 +128,10 @@ cd packages/banner && npm test
 cd apps/web && npm test
 ```
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). **`main` is the default base.** Open one focused PR per change — do not stack long feature branches.
+
 ## Milestone acceptance
 
 | Milestone | Met? |
@@ -140,6 +144,10 @@ cd apps/web && npm test
 | M11 Enterprise auth | Yes (OIDC/LDAP mock locally; live IdP until configured) |
 | M12 Banner package + public API | Yes |
 | M13 Demo data, tests, deploy docs | Yes |
+| Occurrence-level lifecycle (sparse records) | Yes |
+| M14 Impact analysis & notification preview | Yes |
+| M15 Enterprise administration workspace | Yes |
+| M16 Consumer & publisher experience | Yes |
 
 Unsupported capabilities: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) and in-app **About**.
 
