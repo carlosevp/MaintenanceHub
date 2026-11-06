@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/features/auth/AuthContext";
+import { ExperienceProvider, useExperience } from "@/features/experience/ExperienceContext";
 import { Layout } from "@/components/Layout";
 import { LoginPage } from "@/routes/LoginPage";
 import { DashboardPage } from "@/routes/DashboardPage";
@@ -26,7 +27,7 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-ink-500">
+      <div className="flex min-h-screen items-center justify-center text-sm text-ink-muted">
         Loading session…
       </div>
     );
@@ -35,46 +36,78 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return children;
 }
 
+function RequireCapability({
+  capability,
+  children,
+}: {
+  capability: string;
+  children: ReactNode;
+}) {
+  const { can, loading, label } = useExperience();
+  if (loading) return null;
+  if (!can(capability)) {
+    return <Navigate to="/" replace state={{ capabilityDenied: capability, profile: label }} />;
+  }
+  return children;
+}
+
 export default function App() {
   return (
-    <AuthProvider>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route
-          element={
-            <RequireAuth>
-              <Layout />
-            </RequireAuth>
-          }
-        >
-          <Route index element={<DashboardPage />} />
-          <Route path="calendar" element={<CalendarPage />} />
-          <Route path="catalog" element={<CatalogPage />} />
-          <Route path="catalog/:id" element={<CatalogDetailPage />} />
-          <Route path="subscriptions" element={<SubscriptionsPage />} />
-          <Route path="banner-demo" element={<BannerDemoPage />} />
-          <Route path="about" element={<AboutPage />} />
-          <Route path="status/apps/:applicationKey" element={<StatusApplicationPage />} />
+    <ExperienceProvider>
+      <AuthProvider>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
           <Route
-            path="status/apps/:applicationKey/envs/:environmentKey"
-            element={<StatusApplicationPage />}
-          />
-          <Route path="status/events/:eventId" element={<StatusEventPage />} />
-          <Route path="status/scheduled/:eventId" element={<StatusEventPage />} />
-          <Route path="events/new" element={<EventCreatePage />} />
-          <Route path="events/:id" element={<EventDetailPage />} />
-          <Route path="admin" element={<AdminShell />}>
-            <Route index element={<AdminOverviewPage />} />
-            <Route path="catalog" element={<AdminCatalogPage />} />
-            <Route path="servicenow" element={<AdminServiceNowPage />} />
-            <Route path="notifications" element={<AdminNotificationsPage />} />
-            <Route path="users" element={<AdminUsersPage />} />
-            <Route path="jobs" element={<AdminJobsPage />} />
-            <Route path="audit" element={<AdminAuditPage />} />
+            element={
+              <RequireAuth>
+                <Layout />
+              </RequireAuth>
+            }
+          >
+            <Route index element={<DashboardPage />} />
+            <Route path="calendar" element={<CalendarPage />} />
+            <Route path="alerts" element={<SubscriptionsPage />} />
+            <Route path="subscriptions" element={<Navigate to="/alerts" replace />} />
+            <Route path="catalog" element={<CatalogPage />} />
+            <Route path="catalog/:id" element={<CatalogDetailPage />} />
+            <Route
+              path="banner-demo"
+              element={
+                <RequireCapability capability="banner_embed">
+                  <BannerDemoPage />
+                </RequireCapability>
+              }
+            />
+            <Route path="about" element={<AboutPage />} />
+            <Route path="status/apps/:applicationKey" element={<StatusApplicationPage />} />
+            <Route
+              path="status/apps/:applicationKey/envs/:environmentKey"
+              element={<StatusApplicationPage />}
+            />
+            <Route path="status/events/:eventId" element={<StatusEventPage />} />
+            <Route path="status/scheduled/:eventId" element={<StatusEventPage />} />
+            <Route path="events/new" element={<EventCreatePage />} />
+            <Route path="events/:id" element={<EventDetailPage />} />
+            <Route
+              path="admin"
+              element={
+                <RequireCapability capability="admin_workspace">
+                  <AdminShell />
+                </RequireCapability>
+              }
+            >
+              <Route index element={<AdminOverviewPage />} />
+              <Route path="catalog" element={<AdminCatalogPage />} />
+              <Route path="servicenow" element={<AdminServiceNowPage />} />
+              <Route path="notifications" element={<AdminNotificationsPage />} />
+              <Route path="users" element={<AdminUsersPage />} />
+              <Route path="jobs" element={<AdminJobsPage />} />
+              <Route path="audit" element={<AdminAuditPage />} />
+            </Route>
           </Route>
-        </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </AuthProvider>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthProvider>
+    </ExperienceProvider>
   );
 }

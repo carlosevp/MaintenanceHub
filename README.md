@@ -148,8 +148,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). **`main` is the default base.** Open one
 | M14 Impact analysis & notification preview | Yes |
 | M15 Enterprise administration workspace | Yes |
 | M16 Consumer & publisher experience | Yes |
+| M17 UX redesign + experience profiles | Yes |
 
 Unsupported capabilities: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) and in-app **About**.
+
+### Zero-config demo
+
+```bash
+make demo              # enterprise profile by default
+make demo-essentials   # no integrations / admin
+make demo-stop
+```
+
+Prints URL + demo credentials. Refuses to run when `ENVIRONMENT` is staging/production.
 
 ## Auth safety
 

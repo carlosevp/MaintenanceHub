@@ -18,6 +18,7 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 | **M14 Impact analysis** | **Implemented + hardened**: dependency reverse traversal, publisher-scoped preview, confirm with revision tokens, etc. Advisory only; graph quality depends on CMDB/manual edges. |
 | **M15 Admin workspace** | **Implemented**: `/admin` Overview, Apps/Deps, SN/CMDB, Notifications, Users/Permissions, Jobs/Delivery, Audit. API authz required. Secrets are env/OpenShift only (status/redaction; no secret editor). See [administration.md](./administration.md). |
 | **M16 Consumer & publisher UX** | **Implemented**: My Applications homepage; calendar day/week/month/agenda + filters; four-step publisher wizard (Details→Impact→Audience→Review) with drafts/templates/Quick Publish; subscription app/env/event targets + multi-reminders; clearer email/bridge templates; authenticated shareable status URLs (`/status/apps/...`, `/status/events/...`, `/status/scheduled/...`). |
+| **M17 UX redesign** | **Implemented**: Modern Operational Minimalism design tokens (light/dark); Overview / Calendar / My Alerts IA; experience profiles Essentials\|Team\|Enterprise via centralized `EXPERIENCE_PROFILE` registry; `make demo` zero-config local bootstrap. |
 | **Native mobile / Redis / RabbitMQ** | Out of scope. |
 
 ## Recurrence / occurrence caveats (known)
@@ -35,6 +36,8 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 - **M16 ICS:** Feed refresh is client poll interval only — not push-realtime.
 - **M16 publisher reminders:** Wizard reminder offsets document publisher expectation; actual reminder delivery is owned by consumer subscriptions.
 - **M16 drafts:** Local browser draft only (not server-persisted drafts).
+- **M17 profiles:** Profile is deploy-time (`EXPERIENCE_PROFILE`); no in-app feature-admin UI. Essentials omits impact analysis, recurrence editor, admin/SN/CSV. Switching profiles requires restart/redeploy.
+- **M17 demo:** `make demo` is local_dev only and refuses staging/production environments.
 
 ## Permanent non-goals
 

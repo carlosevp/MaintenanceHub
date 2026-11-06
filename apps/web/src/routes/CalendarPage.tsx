@@ -102,10 +102,11 @@ export function CalendarPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-display text-3xl font-semibold text-ink-950">Maintenance calendar</h1>
-          <p className="mt-1 text-sm text-ink-600">
-            Day, week, month, and agenda — same confirmed/approved semantics as My Applications.
-            Browser TZ: <code>{tz}</code>. Event rows carry their own IANA timezone.
+          <p className="mh-eyebrow">Calendar</p>
+          <h1 className="font-display text-3xl font-semibold text-ink">Schedule</h1>
+          <p className="mt-1 text-sm text-ink-muted">
+            Day, week, month, and agenda. Same rules as Overview: confirmed work is never inferred
+            from a window alone. Browser TZ: <code className="text-ink">{tz}</code>.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

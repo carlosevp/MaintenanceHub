@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AuthMode = Literal["local_dev", "oidc", "ldap"]
 EnvironmentName = Literal["development", "staging", "production"]
+ExperienceProfile = Literal["essentials", "team", "enterprise"]
 
 
 class Settings(BaseSettings):
@@ -77,6 +78,9 @@ class Settings(BaseSettings):
     ldap_mock: bool = False
 
     seed_demo_data: bool = True
+
+    # M17 — Essentials | Team | Enterprise (centralized capability registry)
+    experience_profile: ExperienceProfile = "enterprise"
 
     job_lease_seconds: int = 30
     job_max_attempts: int = 5

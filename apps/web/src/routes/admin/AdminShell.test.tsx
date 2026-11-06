@@ -1,6 +1,8 @@
+import type { ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ExperienceProvider } from "@/features/experience/ExperienceContext";
 import { AdminShell } from "./AdminShell";
 
 const useAuth = vi.fn();
@@ -8,6 +10,10 @@ const useAuth = vi.fn();
 vi.mock("@/features/auth/AuthContext", () => ({
   useAuth: () => useAuth(),
 }));
+
+function wrap(ui: ReactNode) {
+  return <ExperienceProvider>{ui}</ExperienceProvider>;
+}
 
 afterEach(() => {
   cleanup();
@@ -20,12 +26,14 @@ describe("AdminShell authz gate", () => {
       loading: false,
     });
     render(
-      <MemoryRouter initialEntries={["/admin"]}>
-        <Routes>
-          <Route path="/admin" element={<AdminShell />} />
-          <Route path="/" element={<div>home</div>} />
-        </Routes>
-      </MemoryRouter>,
+      wrap(
+        <MemoryRouter initialEntries={["/admin"]}>
+          <Routes>
+            <Route path="/admin" element={<AdminShell />} />
+            <Route path="/" element={<div>home</div>} />
+          </Routes>
+        </MemoryRouter>,
+      ),
     );
     expect(screen.getByText(/requires the/i)).toBeInTheDocument();
     expect(screen.getByText(/platform_administrator/i)).toBeInTheDocument();
@@ -42,13 +50,15 @@ describe("AdminShell authz gate", () => {
       loading: false,
     });
     render(
-      <MemoryRouter initialEntries={["/admin"]}>
-        <Routes>
-          <Route path="/admin" element={<AdminShell />}>
-            <Route index element={<div>Admin overview content</div>} />
-          </Route>
-        </Routes>
-      </MemoryRouter>,
+      wrap(
+        <MemoryRouter initialEntries={["/admin"]}>
+          <Routes>
+            <Route path="/admin" element={<AdminShell />}>
+              <Route index element={<div>Admin overview content</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      ),
     );
     expect(screen.getByText("Admin overview content")).toBeInTheDocument();
     expect(screen.getByText(/Secrets stay in environment/i)).toBeInTheDocument();

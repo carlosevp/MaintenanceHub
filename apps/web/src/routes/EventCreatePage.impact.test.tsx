@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ExperienceProvider } from "@/features/experience/ExperienceContext";
 import { EventCreatePage } from "./EventCreatePage";
 
 const impactPreview = vi.fn();
@@ -92,7 +93,9 @@ describe("EventCreatePage impact analysis stability", () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter>
-        <EventCreatePage />
+        <ExperienceProvider>
+          <EventCreatePage />
+        </ExperienceProvider>
       </MemoryRouter>,
     );
 

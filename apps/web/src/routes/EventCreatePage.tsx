@@ -11,11 +11,11 @@ import { ImpactAnalysisPanel } from "@/components/ImpactAnalysisPanel";
 import { RecurrenceEditor, defaultRecurrence, type RecurrenceValue } from "@/components/RecurrenceEditor";
 import type { ConfirmReady, ExclusionRow } from "@/lib/impactPreviewSession";
 import { localWallTimeToUtcIso, ZonedDateTimeError } from "@/lib/zonedDateTime";
+import { useExperience } from "@/features/experience/ExperienceContext";
 import clsx from "clsx";
 
 type Step = "details" | "impact" | "audience" | "review";
 const DRAFT_KEY = "mh_publish_draft_v1";
-const STEPS: Step[] = ["details", "impact", "audience", "review"];
 const STEP_LABELS: Record<Step, string> = {
   details: "Details",
   impact: "Impact",
@@ -50,10 +50,16 @@ const TEMPLATES = [
 export function EventCreatePage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const { can } = useExperience();
   const quick = params.get("quick") === "1" || params.get("kind") === "manual_outage";
+  const useImpactFlow = can("impact_analysis") && !quick;
+  const STEPS: Step[] = useImpactFlow
+    ? ["details", "impact", "audience", "review"]
+    : ["details", "review"];
   const initialKind = params.get("kind") === "manual_outage" ? "manual_outage" : "planned_maintenance";
 
   const [step, setStep] = useState<Step>("details");
+  const [showMore, setShowMore] = useState(!quick);
   const [apps, setApps] = useState<Application[]>([]);
   const [envs, setEnvs] = useState<Environment[]>([]);
   const [infra, setInfra] = useState<InfraComponent[]>([]);
@@ -217,7 +223,38 @@ export function EventCreatePage() {
   function onDetailsContinue(e: FormEvent) {
     e.preventDefault();
     if (!validateDetails()) return;
-    setStep("impact");
+    if (useImpactFlow) {
+      setStep("impact");
+      return;
+    }
+    setStep("review");
+  }
+
+  async function onSimplePublish() {
+    if (!validateDetails()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const startsAt = localWallTimeToUtcIso(starts, timezone);
+      const endsAt = localWallTimeToUtcIso(ends, timezone);
+      const created = await api.createEvent({
+        kind,
+        title,
+        description: publisherNote ? `${description}\n\nPublisher note: ${publisherNote}` : description,
+        expected_impact: impact,
+        approval_state: "confirmed_scheduled",
+        starts_at: startsAt,
+        ends_at: endsAt,
+        timezone,
+        impacts: seeds,
+      });
+      localStorage.removeItem(DRAFT_KEY);
+      navigate(`/events/${created.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Publish failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function onImpactContinue() {
@@ -342,10 +379,10 @@ export function EventCreatePage() {
                   ? "Report manual outage"
                   : "Publish maintenance"}
             </h1>
-            <p className="mt-2 text-sm text-ink-600">
-              Four steps: Details → Impact → Audience/reminders → Review. Confirmed impacts are never
-              inferred from the window alone. Series defaults apply to occurrences unless an occurrence
-              override is set later.
+            <p className="mt-2 text-sm text-ink-muted">
+              {useImpactFlow
+                ? "Details → What’s affected → Who’s notified → Review. Confirmed communication is never inferred from the window alone."
+                : "Quick path: fill the essentials and publish. Advanced impact analysis is available on Team/Enterprise profiles."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -413,23 +450,39 @@ export function EventCreatePage() {
               />
             </div>
             <div>
-              <label className="mh-label" htmlFor="desc">
-                Description
+              <label className="mh-label" htmlFor="impact">
+                What’s affected
               </label>
-              <textarea
-                id="desc"
+              <input
+                id="impact"
                 className="mh-input"
-                rows={3}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                value={impact}
+                onChange={(e) => setImpact(e.target.value)}
+                placeholder="e.g. Brief read-only window"
               />
             </div>
-            <div>
-              <label className="mh-label" htmlFor="impact">
-                Expected impact
-              </label>
-              <input id="impact" className="mh-input" value={impact} onChange={(e) => setImpact(e.target.value)} />
-            </div>
+            <button
+              type="button"
+              className="text-sm font-medium text-accent underline"
+              onClick={() => setShowMore((v) => !v)}
+              aria-expanded={showMore}
+            >
+              {showMore ? "Hide optional details" : "More options"}
+            </button>
+            {showMore && (
+              <div>
+                <label className="mh-label" htmlFor="desc">
+                  Description
+                </label>
+                <textarea
+                  id="desc"
+                  className="mh-input"
+                  rows={3}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                />
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="mh-label" htmlFor="starts">
@@ -473,7 +526,7 @@ export function EventCreatePage() {
               </p>
             </div>
 
-            {kind === "planned_maintenance" && (
+            {kind === "planned_maintenance" && can("recurrence_editor") && showMore && (
               <>
                 <RecurrenceEditor
                   enabled={recurring}
@@ -485,10 +538,9 @@ export function EventCreatePage() {
                   timezone={timezone}
                 />
                 {recurring && (
-                  <p className="rounded-md border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-600">
-                    Series defaults (title, expected impact, primary targets) apply to each occurrence.
-                    Reschedule, cancel, extend, and occurrence impact overrides are edited on the
-                    occurrence detail after publish.
+                  <p className="rounded-md border border-ink-200 bg-accent-soft px-3 py-2 text-xs text-ink-muted">
+                    Series defaults apply to each occurrence. Overrides are edited on the occurrence
+                    detail after publish.
                   </p>
                 )}
               </>
@@ -557,29 +609,31 @@ export function EventCreatePage() {
               </div>
             </fieldset>
 
-            <fieldset className="rounded-lg border border-dashed border-ink-200 p-3">
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-500">
-                Optional second application impact
-              </legend>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <select className="mh-input" value={appId2} onChange={(e) => setAppId2(e.target.value)}>
-                  <option value="">None</option>
-                  {apps.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-                <select className="mh-input" value={envId2} onChange={(e) => setEnvId2(e.target.value)}>
-                  <option value="">—</option>
-                  {envs.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.key}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </fieldset>
+            {showMore && (
+              <fieldset className="rounded-lg border border-dashed border-ink-200 p-3">
+                <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                  Optional second app
+                </legend>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <select className="mh-input" value={appId2} onChange={(e) => setAppId2(e.target.value)}>
+                    <option value="">None</option>
+                    {apps.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select className="mh-input" value={envId2} onChange={(e) => setEnvId2(e.target.value)}>
+                    <option value="">—</option>
+                    {envs.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {e.key}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </fieldset>
+            )}
 
             {error && (
               <p
@@ -590,7 +644,7 @@ export function EventCreatePage() {
               </p>
             )}
             <button className="mh-btn" type="submit">
-              Continue to impact analysis
+              {useImpactFlow ? "Continue to impact analysis" : "Continue to review"}
             </button>
           </form>
         )}
@@ -745,16 +799,21 @@ export function EventCreatePage() {
               </p>
             )}
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="mh-btn-ghost" onClick={() => setStep("audience")} disabled={busy}>
+              <button
+                type="button"
+                className="mh-btn-ghost"
+                onClick={() => setStep(useImpactFlow ? "audience" : "details")}
+                disabled={busy}
+              >
                 Back
               </button>
               <button
                 type="button"
                 className="mh-btn"
-                onClick={() => void onPublish()}
-                disabled={!canPublish}
+                onClick={() => void (useImpactFlow ? onPublish() : onSimplePublish())}
+                disabled={useImpactFlow ? !canPublish : busy}
               >
-                {busy ? "Publishing…" : "Confirm impacts & publish"}
+                {busy ? "Publishing…" : useImpactFlow ? "Confirm & publish" : "Publish"}
               </button>
             </div>
           </div>

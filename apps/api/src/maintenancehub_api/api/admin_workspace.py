@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
+from maintenancehub_api.api.experience import require_capability
 from maintenancehub_api.config import get_settings
 from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, require_roles
@@ -41,6 +42,7 @@ def admin_overview(
     _: AuthUser = Depends(require_roles(_ADMIN)),
 ) -> dict[str, Any]:
     """Summary dashboard for the administration workspace."""
+    require_capability("admin_workspace")
     s = get_settings()
     now = datetime.now(timezone.utc)
     jobs_by_status = {
