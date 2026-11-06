@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Independent host — Claims INT banner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      Host CSP example (tighten for production):
+      Content-Security-Policy:
+        default-src 'self';
+        script-src 'self' https://maintenancehub.example.com 'unsafe-inline';
+        style-src 'self' https://maintenancehub.example.com;
+        connect-src 'self' https://maintenancehub.example.com;
+        img-src 'self' data:;
+      Prefer nonces over 'unsafe-inline' for the mount script in production.
+    -->
+    <link rel="stylesheet" href="../src/style.css" />
+    <style>
+      /* Host styles — banner CSS is scoped to .mh-banner* and must not break this page */
+      :root {
+        color-scheme: light;
+      }
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        background: #faf7f2;
+        color: #1c1917;
+      }
+      .host-header {
+        padding: 2rem 1.5rem 1rem;
+        max-width: 40rem;
+        margin: 0 auto;
+      }
+      .host-header h1 {
+        margin: 0;
+        font-size: 2.25rem;
+      }
+      .host-main {
+        max-width: 40rem;
+        margin: 0 auto;
+        padding: 0 1.5rem 3rem;
+      }
+      .host-panel {
+        background: #fff;
+        border: 1px solid #e7e5e4;
+        border-radius: 4px;
+        padding: 1.25rem;
+      }
+      .host-panel h2 {
+        margin-top: 0;
+        font-size: 1.15rem;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="host-header">
+      <h1>Claims</h1>
+      <p>Independent host (outside MaintenanceHub frontend) · INT</p>
+    </header>
+    <main class="host-main">
+      <!-- Copied snippet target -->
+      <div id="mh-banner-root"></div>
+      <div class="host-panel">
+        <h2>Claims INT workspace</h2>
+        <p>
+          This page is a standalone host. The banner above is mounted via copy-paste
+          <code>embed.js</code> only. Host typography stays Georgia; banner styles are
+          scoped under <code>.mh-banner</code>.
+        </p>
+      </div>
+    </main>
+    <script src="../src/embed.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        var params = new URLSearchParams(location.search);
+        var api = params.get("api") || "http://127.0.0.1:8000";
+        window.MaintenanceHubBanner.mount({
+          target: "#mh-banner-root",
+          apiBaseUrl: api,
+          applicationKey: "claims",
+          environmentKey: "INT",
+          advanceHours: Number(params.get("advance") || 24),
+          timeZone: params.get("tz") || Intl.DateTimeFormat().resolvedOptions().timeZone,
+          statusPageBaseUrl: params.get("status") || api.replace(":8000", ":5173"),
+          theme: params.get("theme") || "light",
+          compact: true,
+          pollIntervalMs: 60000,
+        });
+      });
+    </script>
+  </body>
+</html>

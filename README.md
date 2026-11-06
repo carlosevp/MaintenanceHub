@@ -4,7 +4,7 @@ Internal **Maintenance & Outage Communication Platform**.
 
 This is **not** a monitoring product. Status is published by people (planned maintenance, extensions, manual outages). Platform `/healthz` and `/readyz` exist only for pod liveness/readiness.
 
-Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M17** (catalog through consumer/publisher UX, experience profiles, and Modern Operational Minimalism redesign). See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for remaining gaps.
+Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M18** (catalog through UX profiles, and public/internal banner embeds). See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for remaining gaps.
 
 ## Stack
 
@@ -61,27 +61,28 @@ Open http://localhost:5173 — Banner demo at `/banner-demo`, limitations at `/a
 
 All demo titles are prefixed with `[DEMO]`. Seed includes apps (`payments-gateway`, `hr-portal`, `inventory-svc`), tags, a manual dependency, favorites, current/upcoming/recent events, a manual outage, and a **weekly recurring** Payments window (with one skipped occurrence) plus a monthly **approved_window** series.
 
-### Banner package
+### Banner package (M18)
 
 ```bash
 cd packages/banner && npm install && npm test && npm run build
 ```
 
-Usage: [packages/banner/README.md](packages/banner/README.md). API: `GET /api/v1/public/banner?application_key=…` with a JWT that has scope `banner:read` (service credential) or a publisher/admin user.
+- Package README: [packages/banner/README.md](packages/banner/README.md)
+- Developer guide (JS / TS / JSON, local, OpenShift, CORS/CSP): [docs/banner-developer-guide.md](docs/banner-developer-guide.md)
+- API contract: [docs/banner-api.md](docs/banner-api.md)
+- In-app **Embed banner**: `/banner-demo` (Claims INT demo story)
 
-### Service credential for embeds
+**Browser embeds** must use the configured **HTTPS** corporate base (`PUBLIC_BASE_URL` / Embed screen). Do **not** put OpenShift service DNS (`maintenancehub-api`) or `client_secret` in browser snippets. Optional service JWTs need scope `banner:read` and belong on a BFF only.
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
-  -H 'Content-Type: application/json' \
-  -d '{"email":"admin@demo.example.com","password":"password123"}' \
-  | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
+# Public DTO — no credentials required
+curl -s "http://127.0.0.1:8000/api/v1/public/banner?application_key=claims&environment_key=INT"
 
-curl -s -X POST http://localhost:8000/api/v1/admin/service-credentials \
-  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"name":"banner-embed","scopes":["banner:read"]}'
-# then POST /api/v1/auth/service/token with client_id + client_secret
+# In-cluster shape (BFF / OpenShift only)
+curl -s "http://127.0.0.1:8000/api/v1/internal/banner?application_key=claims&environment_key=INT"
 ```
+
+`embed.js` is hand-synced with the TypeScript package — change both when editing banner UX (see developer guide).
 
 ## Make targets
 

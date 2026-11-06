@@ -1,60 +1,66 @@
 # `@maintenancehub/banner`
 
-Lightweight embeddable banner for **confirmed** planned maintenance and manual outages.
+Lightweight embeddable banner for **confirmed** planned maintenance and manual outages (M12/M18 harden).
 
 This is **not** a monitoring probe — it only displays messages published in MaintenanceHub.
 
-## Security (browser embeds)
+## Security
 
-`GET /api/v1/public/banner` returns a **minimal public DTO** and may be called **without authentication**.
+- Public DTO may be fetched **without** auth. **Never** put `client_secret` in browsers.
+- XSS-safe escaped text; CSS scoped to `.mh-banner*`.
+- Browser snippets should use **HTTPS** corporate bases. Local / in-cluster URLs warn.
 
-**Do not** put long-lived service `client_id` / `client_secret` values in frontend JavaScript, mobile apps, or public HTML. Those secrets belong only on a trusted server (BFF) or worker.
+## Compact UX
 
-Optional Bearer tokens are for server-side callers (service credential with scope `banner:read`, or publisher/admin JWT).
+By default the banner shows **one primary** notice (highest priority) plus **View N additional**.
+Expanded mode lists all. Upcoming notices are dismissible; `revision` changes re-show them.
 
 ## Install / build
 
 ```bash
-cd packages/banner
-npm install
-npm run build
+cd packages/banner && npm install && npm run build
 ```
 
-```ts
-import { mountMaintenanceBanner } from "@maintenancehub/banner";
-import "@maintenancehub/banner/style.css";
-```
-
-## Usage (browser — no secrets)
+## Browser snippet (Claims INT)
 
 ```html
+<link rel="stylesheet" href="https://maintenancehub.example.com/static/banner/style.css" />
 <div id="mh-banner-root"></div>
-<script type="module">
-  import { mountMaintenanceBanner } from "./node_modules/@maintenancehub/banner/dist/index.js";
-
-  mountMaintenanceBanner({
-    target: "#mh-banner-root",
-    apiBaseUrl: "https://maintenancehub.example.com",
-    applicationKey: "payments-gateway",
-    environmentKey: "PROD", // optional
-    pollIntervalMs: 60000,
+<script src="https://maintenancehub.example.com/static/banner/embed.js" defer></script>
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    window.MaintenanceHubBanner.mount({
+      target: "#mh-banner-root",
+      apiBaseUrl: "https://maintenancehub.example.com",
+      applicationKey: "claims",
+      environmentKey: "INT",
+      timeZone: "America/Chicago", // optional IANA; default = viewer
+      statusPageBaseUrl: "https://maintenancehub.example.com",
+      theme: "light",
+      compact: true,
+      pollIntervalMs: 60000,
+    });
   });
 </script>
 ```
 
-### Server-side / BFF (optional token)
+Independent host demo: `examples/independent-host.html`.
+
+## TypeScript
 
 ```ts
-import { fetchBannerMessages } from "@maintenancehub/banner";
-
-const messages = await fetchBannerMessages({
-  apiBaseUrl: "http://localhost:8000",
-  accessToken: shortLivedJwt, // never a client_secret
-  applicationKey: "payments-gateway",
-});
+import { mountMaintenanceBanner, buildEmbedSnippet, formatWindowIntl } from "@maintenancehub/banner";
+import "@maintenancehub/banner/style.css";
 ```
 
-## Public DTO
+API returns ISO-8601; UI formats via `Intl` (`formatWindowIntl`).
 
-Only: `id`, `kind`, `title`, `status`, `starts_at`, `ends_at`, `expected_impact`, `approval_state`.  
-Internal notes / descriptions / timeline are **not** exposed.
+## Routes
+
+| Kind | Use |
+|------|-----|
+| Browser / corporate | `https://…/api/v1/public/banner` |
+| In-cluster | `http://maintenancehub-api:8000/api/v1/internal/banner` (BFF only) |
+| Local | `http://127.0.0.1:8000` — demos only |
+
+See [`docs/banner-api.md`](../../docs/banner-api.md) and [`docs/banner-developer-guide.md`](../../docs/banner-developer-guide.md) for CORS, CSP, filtering, multi-notice policy, OpenShift routes, and the **`embed.js` ↔ TypeScript hand-sync** limitation (no automatic IIFE compile — update both files).

@@ -28,7 +28,10 @@ class Settings(BaseSettings):
 
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    api_cors_origins: str = "http://localhost:5173,http://localhost:3000"
+    api_cors_origins: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:3000,http://127.0.0.1:3000"
+    )
 
     jwt_secret: str = "change-me-local-dev-only"
     jwt_expire_minutes: int = 480
@@ -89,6 +92,11 @@ class Settings(BaseSettings):
     worker_id: str = ""
 
     public_base_url: str = "http://localhost:8000"
+
+    # M18 — public / internal banner embeds
+    banner_advance_hours: float = 24.0
+    banner_cache_max_age_seconds: int = 30
+    banner_rate_limit_per_minute: int = 60
 
     @field_validator("auth_mode", mode="before")
     @classmethod

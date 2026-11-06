@@ -127,7 +127,7 @@ export function Layout() {
           </Link>
           {can("banner_embed") && (
             <Link to="/banner-demo" className="hover:text-ink">
-              Banner embed
+              Embed banner
             </Link>
           )}
           <span>Communication platform — not monitoring</span>

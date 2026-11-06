@@ -3,13 +3,19 @@ import { describe, expect, it } from "vitest";
 /** Mirrors public banner DTO contract used by BannerDemoPage. */
 const PUBLIC_KEYS = new Set([
   "id",
+  "event_id",
   "kind",
   "title",
   "status",
+  "presentation",
   "starts_at",
   "ends_at",
   "expected_impact",
   "approval_state",
+  "revision",
+  "dismissible",
+  "occurrence_starts_at",
+  "status_path",
 ]);
 
 function assertPublicDto(raw: Record<string, unknown>): boolean {

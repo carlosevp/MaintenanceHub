@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Claims INT — MaintenanceHub banner demo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="../src/style.css" />
+    <style>
+      body {
+        margin: 0;
+        font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+        background: linear-gradient(180deg, #f4f7f6 0%, #e7eeec 100%);
+        color: #1a2332;
+      }
+      header {
+        padding: 28px 24px 12px;
+        max-width: 720px;
+        margin: 0 auto;
+      }
+      header h1 {
+        font-family: "Fraunces", Georgia, serif;
+        font-size: 2rem;
+        margin: 0 0 8px;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+        padding: 0 24px 48px;
+      }
+      .panel {
+        background: #fff;
+        border: 1px solid #d5e4e1;
+        border-radius: 12px;
+        padding: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Claims</h1>
+      <p>Integration environment · host-app embed demo</p>
+    </header>
+    <main>
+      <div id="mh-banner-root"></div>
+      <div class="panel">
+        <h2>Claims INT workspace</h2>
+        <p>
+          The banner above loads only <strong>confirmed</strong> MaintenanceHub
+          notices for <code>claims</code> / <code>INT</code>. Approved-only windows
+          never appear as outages. This is communication — not monitoring.
+        </p>
+      </div>
+    </main>
+    <script src="../src/embed.js"></script>
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        var params = new URLSearchParams(location.search);
+        window.MaintenanceHubBanner.mount({
+          target: "#mh-banner-root",
+          apiBaseUrl: params.get("api") || "http://127.0.0.1:8000",
+          applicationKey: "claims",
+          environmentKey: "INT",
+          advanceHours: Number(params.get("advance") || 24),
+          timeZone: params.get("tz") || Intl.DateTimeFormat().resolvedOptions().timeZone,
+          theme: params.get("theme") || "light",
+          compact: true,
+          pollIntervalMs: 60000,
+        });
+      });
+    </script>
+  </body>
+</html>
