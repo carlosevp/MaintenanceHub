@@ -114,11 +114,11 @@ describe("EventCreatePage impact analysis stability", () => {
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(screen.getByLabelText(/Target type/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText(/^Target$/i)).toBeInTheDocument());
 
-    await user.type(screen.getByLabelText(/^Title$/i), "Oracle window");
-    const starts = screen.getByLabelText(/Starts/i);
-    const ends = screen.getByLabelText(/Ends/i);
+    await user.type(screen.getByLabelText(/^What$/i), "Oracle window");
+    const starts = screen.getByLabelText(/^Starts$/i);
+    const ends = screen.getByLabelText(/^Ends$/i);
     await user.clear(starts);
     await user.type(starts, "2026-07-01T02:00");
     await user.clear(ends);

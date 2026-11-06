@@ -6,96 +6,77 @@ import {
   type DashboardSummary,
   type MaintenanceEvent,
 } from "@/api/client";
-import { ApprovalBadge, KindBadge, StatusBadge } from "@/components/StatusBadge";
+import { PrimaryStatusBadge } from "@/components/StatusBadge";
 import { fmtRange, untilBack } from "@/lib/format";
 import { useAuth } from "@/features/auth/AuthContext";
 import { ScenarioSelector } from "@/components/ScenarioSelector";
 import { useExperience } from "@/features/experience/ExperienceContext";
+import clsx from "clsx";
 
-function EventRow({ event }: { event: MaintenanceEvent }) {
+const UPCOMING_PREVIEW = 5;
+
+function cleanTitle(title: string) {
+  return title.replace("[DEMO] ", "");
+}
+
+function EventRow({
+  event,
+  compact,
+}: {
+  event: MaintenanceEvent;
+  compact?: boolean;
+}) {
+  const active =
+    event.status === "in_progress" ||
+    event.status === "extended" ||
+    event.status === "verifying";
   const isOutage = event.kind === "manual_outage" || event.status === "extended";
+
   return (
-    <li className="animate-rise border-b border-ink-200 py-4 last:border-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <li
+      className={clsx(
+        "border-b border-ink-200 last:border-0",
+        compact ? "py-3" : "py-4",
+      )}
+    >
+      <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <Link
-            to={`/events/${event.id}`}
-            className="font-semibold text-ink hover:underline"
-          >
-            {event.title.replace("[DEMO] ", "")}
-          </Link>
-          <p className="mt-1 text-sm text-ink-muted">{fmtRange(event.starts_at, event.ends_at)}</p>
-          {event.expected_impact && (
-            <p className="mt-1 text-sm text-ink">
-              <span className="font-medium">What’s affected:</span> {event.expected_impact}
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <Link
+              to={`/events/${event.id}`}
+              className="truncate font-semibold text-ink hover:underline"
+              title={cleanTitle(event.title)}
+            >
+              {cleanTitle(event.title)}
+            </Link>
+            <PrimaryStatusBadge
+              status={event.status}
+              approvalState={event.approval_state}
+              kind={event.kind}
+            />
+          </div>
+          <p className="mt-1 truncate text-sm text-ink-muted">
+            {fmtRange(event.starts_at, event.ends_at, event.timezone)}
+          </p>
+          {!compact && event.expected_impact && (
+            <p className="mt-1 line-clamp-2 text-sm text-ink">
+              <span className="font-medium text-ink-muted">Impact: </span>
+              {event.expected_impact}
             </p>
           )}
-          {(event.status === "in_progress" ||
-            event.status === "extended" ||
-            event.status === "verifying") && (
-            <p className={`mt-1 text-sm font-medium ${isOutage ? "text-danger" : "text-warn"}`}>
+          {active && (
+            <p
+              className={clsx(
+                "mt-1 text-sm font-medium",
+                isOutage ? "text-danger" : "text-warn",
+              )}
+            >
               {untilBack(event.ends_at)}
             </p>
           )}
-          <p className="mt-1 text-xs text-ink-faint">
-            <Link to={`/status/events/${event.id}`} className="underline hover:text-accent">
-              Shareable status
-            </Link>
-            {event.approval_state === "approved_window" && (
-              <span className="ml-2 text-warn">· planned window (not yet confirmed)</span>
-            )}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <KindBadge kind={event.kind} />
-          <StatusBadge status={event.status} />
-          <ApprovalBadge state={event.approval_state} />
         </div>
       </div>
     </li>
-  );
-}
-
-function Section({
-  title,
-  subtitle,
-  count,
-  items,
-  empty,
-  emphasize,
-}: {
-  title: string;
-  subtitle: string;
-  count: number;
-  items: MaintenanceEvent[];
-  empty: string;
-  emphasize?: boolean;
-}) {
-  return (
-    <section
-      className={`mh-panel p-5 ${emphasize ? "ring-1 ring-danger/30" : ""}`}
-      aria-labelledby={`sec-${title}`}
-    >
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <h2 id={`sec-${title}`} className="font-display text-xl font-semibold text-ink">
-            {title}
-          </h2>
-          <p className="text-sm text-ink-muted">{subtitle}</p>
-        </div>
-        <span
-          className="rounded-md bg-accent-soft px-2.5 py-1 text-xs font-semibold text-ink"
-          aria-label={`${count} items`}
-        >
-          {count}
-        </span>
-      </div>
-      {items.length === 0 ? (
-        <p className="mt-6 text-sm text-ink-faint">{empty}</p>
-      ) : (
-        <ul className="mt-2">{items.map((e) => <EventRow key={`${e.id}-${e.occurrence_starts_at || ""}`} event={e} />)}</ul>
-      )}
-    </section>
   );
 }
 
@@ -106,8 +87,8 @@ export function DashboardPage() {
   const [apps, setApps] = useState<Application[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [search, setSearch] = useState("");
-  // Default off so first paint isn't an empty Essentials demo when nothing is starred yet.
   const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -161,91 +142,86 @@ export function DashboardPage() {
     ),
   ];
 
+  const upcomingAll = summary?.upcoming.items ?? [];
+  const upcomingVisible = showAllUpcoming
+    ? upcomingAll
+    : upcomingAll.slice(0, UPCOMING_PREVIEW);
+  const upcomingHidden = Math.max(0, upcomingAll.length - UPCOMING_PREVIEW);
+
   return (
-    <div className="space-y-6">
-      <div className="animate-rise max-w-3xl">
+    <div className="space-y-5 md:space-y-6">
+      <header className="animate-rise max-w-2xl">
         <p className="mh-eyebrow">Overview</p>
-        <h1 className="font-display text-3xl font-semibold text-ink sm:text-4xl">
+        <h1 className="font-display text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
           What’s happening
         </h1>
-        <p className="mt-2 text-ink-muted">
-          Active confirmed work and what’s coming next. Status is never guessed from a calendar
-          window alone.
+        <p className="mt-2 text-sm text-ink-muted sm:text-base">
+          Active confirmed work, then what’s next. Status is never guessed from a calendar window
+          alone.
         </p>
         {activeScenario && (
-          <p className="mt-2 rounded-md bg-accent-soft px-3 py-2 text-sm text-ink" role="status">
+          <p className="mt-3 rounded-md bg-accent-soft px-3 py-2 text-sm text-ink" role="status">
             Story: <strong>{activeScenario.label}</strong> — {activeScenario.summary}
           </p>
         )}
-      </div>
+      </header>
 
-      <div className="mh-panel flex flex-wrap items-end gap-3 p-4">
-        <div className="min-w-[14rem] flex-1">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="min-w-0 flex-1 sm:min-w-[16rem]">
           <label className="mh-label" htmlFor="search">
-            Find an outage or window
+            Search
           </label>
           <input
             id="search"
             className="mh-input"
-            placeholder="Search by title or what’s affected…"
+            placeholder="Title or what’s affected…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <label className="mb-2 flex items-center gap-2 text-sm font-medium text-ink">
-          <input
-            type="checkbox"
-            checked={favoritesOnly}
-            onChange={(e) => setFavoritesOnly(e.target.checked)}
-          />
-          My apps only
-        </label>
-        <Link to="/alerts" className="mh-btn-ghost mb-0.5">
-          My Alerts
-        </Link>
-        <Link to="/calendar" className="mh-btn-ghost mb-0.5">
-          Open calendar
-        </Link>
+        {favorites.length > 0 && (
+          <label className="flex items-center gap-2 pb-2 text-sm font-medium text-ink">
+            <input
+              type="checkbox"
+              checked={favoritesOnly}
+              onChange={(e) => setFavoritesOnly(e.target.checked)}
+            />
+            My apps only
+          </label>
+        )}
+        <div className="flex gap-2 pb-0.5">
+          <Link to="/calendar" className="mh-btn-ghost">
+            Calendar
+          </Link>
+          <Link to="/alerts" className="mh-btn-ghost">
+            My Alerts
+          </Link>
+        </div>
       </div>
 
-      <details className="mh-panel p-4">
-        <summary
-          id="my-apps-heading"
-          className="cursor-pointer list-none font-display text-lg font-semibold text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden"
-        >
-          My apps{" "}
-          <span className="ml-2 font-sans text-xs font-medium text-ink-muted">
-            ({favorites.length} starred)
-          </span>
+      <details className="group text-sm">
+        <summary className="cursor-pointer list-none text-ink-muted hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+          Manage starred apps
+          <span className="ml-2 text-ink-faint">({favorites.length})</span>
         </summary>
-        <p className="mt-2 text-sm text-ink-muted">Star apps to personalize Overview and alerts.</p>
         <div className="mt-3 flex flex-wrap gap-2">
           {apps.map((a) => {
             const fav = favorites.includes(a.id);
             return (
-              <div key={a.id} className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className={
-                    fav
-                      ? "rounded-md border border-accent bg-accent-soft px-3 py-1 text-xs font-semibold text-ink"
-                      : "rounded-md border border-ink-200 bg-surface-raised px-3 py-1 text-xs font-medium text-ink-muted hover:bg-accent-soft"
-                  }
-                  aria-pressed={fav}
-                  aria-label={`${fav ? "Unstar" : "Star"} ${a.name.replace("[DEMO] ", "")}`}
-                  onClick={() => void toggleFavorite(a.id)}
-                >
-                  {fav ? "★" : "☆"} {a.name.replace("[DEMO] ", "")}
-                </button>
-                {fav && (
-                  <Link
-                    to={`/status/apps/${a.key}`}
-                    className="rounded-md border border-ink-200 px-2 py-1 text-xs text-ink-muted hover:bg-accent-soft"
-                  >
-                    Status
-                  </Link>
-                )}
-              </div>
+              <button
+                key={a.id}
+                type="button"
+                className={
+                  fav
+                    ? "rounded-md border border-accent bg-accent-soft px-2.5 py-1 text-xs font-semibold text-ink"
+                    : "rounded-md border border-ink-200 px-2.5 py-1 text-xs font-medium text-ink-muted hover:bg-accent-soft"
+                }
+                aria-pressed={fav}
+                aria-label={`${fav ? "Unstar" : "Star"} ${cleanTitle(a.name)}`}
+                onClick={() => void toggleFavorite(a.id)}
+              >
+                {fav ? "★" : "☆"} {cleanTitle(a.name)}
+              </button>
             );
           })}
         </div>
@@ -253,80 +229,136 @@ export function DashboardPage() {
 
       {loading && <p className="text-sm text-ink-muted">Loading overview…</p>}
       {error && (
-        <p className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
+        <p
+          className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger"
+          role="alert"
+        >
           {error}
         </p>
       )}
 
       {summary && !loading && (
-        <>
-          <p className="text-xs text-ink-faint">{summary.note || ""}</p>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Section
-              title="Now"
-              subtitle="Confirmed work in progress — including outages"
-              count={nowItems.length}
-              items={nowItems}
-              empty="Nothing active right now for this filter."
-              emphasize={nowItems.some((e) => e.kind === "manual_outage")}
-            />
-            <Section
-              title="Coming up"
-              subtitle="Confirmed or planned windows still scheduled"
-              count={summary.upcoming.count}
-              items={summary.upcoming.items}
-              empty="No upcoming windows in this filter."
-            />
-          </div>
+        <div className="space-y-5">
+          {/* Compact current strip — not an equal-height twin column */}
+          <section
+            aria-labelledby="sec-now"
+            className={clsx(
+              nowItems.length === 0
+                ? "rounded-lg border border-dashed border-ink-200 px-4 py-3"
+                : "mh-panel px-4 py-3 sm:px-5",
+              nowItems.some((e) => e.kind === "manual_outage") && "ring-1 ring-danger/25",
+            )}
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 id="sec-now" className="font-display text-lg font-semibold text-ink">
+                Happening now
+              </h2>
+              {nowItems.length > 0 && (
+                <span className="text-xs font-medium text-ink-muted">{nowItems.length} active</span>
+              )}
+            </div>
+            {nowItems.length === 0 ? (
+              <p className="mt-1 text-sm text-ink-muted">Nothing active right now.</p>
+            ) : (
+              <ul className="mt-1">
+                {nowItems.map((e) => (
+                  <EventRow
+                    key={`now-${e.id}-${e.occurrence_starts_at || ""}`}
+                    event={e}
+                    compact
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
 
-          {(summary.extended?.count || summary.cancelled?.count || showMore) && (
-            <div className="pt-2">
+          {/* Full-width upcoming list */}
+          <section aria-labelledby="sec-upcoming" className="mh-panel px-4 py-4 sm:px-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h2 id="sec-upcoming" className="font-display text-xl font-semibold text-ink">
+                  Coming up
+                </h2>
+                <p className="text-sm text-ink-muted">Confirmed or planned windows still scheduled</p>
+              </div>
+              <Link to="/calendar" className="text-sm font-medium text-accent hover:underline">
+                View calendar
+              </Link>
+            </div>
+            {upcomingAll.length === 0 ? (
+              <p className="mt-4 text-sm text-ink-muted">No upcoming windows for this filter.</p>
+            ) : (
+              <>
+                <ul className="mt-2">
+                  {upcomingVisible.map((e) => (
+                    <EventRow
+                      key={`up-${e.id}-${e.occurrence_starts_at || ""}`}
+                      event={e}
+                    />
+                  ))}
+                </ul>
+                {!showAllUpcoming && upcomingHidden > 0 && (
+                  <button
+                    type="button"
+                    className="mt-3 text-sm font-medium text-accent hover:underline"
+                    onClick={() => setShowAllUpcoming(true)}
+                  >
+                    View all {upcomingAll.length} upcoming
+                  </button>
+                )}
+                {showAllUpcoming && upcomingHidden > 0 && (
+                  <button
+                    type="button"
+                    className="mt-3 text-sm font-medium text-ink-muted hover:underline"
+                    onClick={() => setShowAllUpcoming(false)}
+                  >
+                    Show fewer
+                  </button>
+                )}
+              </>
+            )}
+          </section>
+
+          {(summary.extended?.count || summary.cancelled?.count || summary.recent.count > 0) && (
+            <div>
               <button
                 type="button"
-                className="text-sm font-medium text-accent underline"
+                className="text-sm font-medium text-ink-muted underline hover:text-ink"
                 onClick={() => setShowMore((v) => !v)}
                 aria-expanded={showMore}
               >
-                {showMore ? "Hide extensions & cancellations" : "Show extensions & cancellations"}
+                {showMore ? "Hide recent history" : "Extensions, cancellations & recent"}
               </button>
+              {showMore && (
+                <div className="mt-3 space-y-3">
+                  {(summary.extended?.items ?? []).map((e) => (
+                    <div key={`ex-${e.id}`} className="rounded-md border border-ink-200 px-3 py-2">
+                      <EventRow event={e} compact />
+                    </div>
+                  ))}
+                  {(summary.cancelled?.items ?? []).slice(0, 4).map((e) => (
+                    <div key={`ca-${e.id}`} className="rounded-md border border-ink-200 px-3 py-2">
+                      <EventRow event={e} compact />
+                    </div>
+                  ))}
+                  {summary.recent.items.slice(0, 4).map((e) => (
+                    <div key={`re-${e.id}`} className="rounded-md border border-ink-200 px-3 py-2">
+                      <EventRow event={e} compact />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
-
-          {showMore && (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <Section
-                title="Extensions"
-                subtitle="Windows currently marked extended"
-                count={summary.extended?.count ?? 0}
-                items={summary.extended?.items ?? []}
-                empty="No active extensions."
-              />
-              <Section
-                title="Recent cancellations"
-                subtitle="Last 14 days"
-                count={summary.cancelled?.count ?? 0}
-                items={summary.cancelled?.items ?? []}
-                empty="No recent cancellations."
-              />
-              <Section
-                title="Recently completed"
-                subtitle="Last 14 days"
-                count={summary.recent.count}
-                items={summary.recent.items}
-                empty="No recent completions."
-              />
-            </div>
-          )}
-        </>
+        </div>
       )}
 
       {user?.roles.includes("publisher") && (
         <p className="text-sm text-ink-muted">
-          Publishing? Use{" "}
+          Publishing?{" "}
           <Link to="/events/new?quick=1" className="font-medium text-accent underline">
             Schedule maintenance
-          </Link>{" "}
-          for a minimal flow.
+          </Link>
         </p>
       )}
 

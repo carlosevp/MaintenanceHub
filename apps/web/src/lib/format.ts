@@ -1,18 +1,54 @@
 import { format, formatDistanceStrict, parseISO } from "date-fns";
 
+function userTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+/** Human wall time in the viewer's timezone (falls back to event TZ hint). */
 export function fmtWhen(iso: string, tzHint?: string): string {
   try {
     const d = parseISO(iso);
-    const base = format(d, "MMM d, yyyy HH:mm");
-    return tzHint ? `${base} UTC (${tzHint})` : `${base} UTC`;
+    const tz = userTimeZone();
+    const formatted = new Intl.DateTimeFormat(undefined, {
+      timeZone: tz,
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    }).format(d);
+    return `${formatted} (${tzHint && tzHint !== tz ? `${tz} · event ${tzHint}` : tz})`;
   } catch {
     return iso;
   }
 }
 
-export function fmtRange(start: string, end: string): string {
+export function fmtRange(start: string, end: string, _tzHint?: string): string {
   try {
-    return `${format(parseISO(start), "MMM d HH:mm")} → ${format(parseISO(end), "MMM d HH:mm")} UTC`;
+    const tz = userTimeZone();
+    const opts: Intl.DateTimeFormatOptions = {
+      timeZone: tz,
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    };
+    const a = new Intl.DateTimeFormat(undefined, opts).format(parseISO(start));
+    const b = new Intl.DateTimeFormat(undefined, {
+      ...opts,
+      month: undefined,
+      day: undefined,
+    }).format(parseISO(end));
+    const sameDay =
+      format(parseISO(start), "yyyy-MM-dd") === format(parseISO(end), "yyyy-MM-dd");
+    if (sameDay) {
+      return `${a} – ${b}`;
+    }
+    const bFull = new Intl.DateTimeFormat(undefined, opts).format(parseISO(end));
+    return `${a} – ${bFull}`;
   } catch {
     return `${start} → ${end}`;
   }
@@ -23,7 +59,7 @@ export function untilBack(endIso: string): string {
     const end = parseISO(endIso);
     const now = new Date();
     if (end <= now) return "window ended";
-    return `expected back in ${formatDistanceStrict(end, now)}`;
+    return `Expected back in ${formatDistanceStrict(end, now)}`;
   } catch {
     return "";
   }
@@ -37,4 +73,8 @@ export function kindLabel(kind: string): string {
   if (kind === "manual_outage") return "Manual outage";
   if (kind === "planned_maintenance") return "Planned maintenance";
   return kind;
+}
+
+export function detectUserTimeZone(): string {
+  return userTimeZone();
 }

@@ -31,9 +31,12 @@ export function Layout() {
         Skip to main content
       </a>
       <header className="border-b border-ink-200/80 bg-surface/80 backdrop-blur-md">
-        <div className="mh-shell flex flex-wrap items-center justify-between gap-3 py-3.5">
-          <div className="flex items-baseline gap-3">
-            <NavLink to="/" className="font-display text-2xl font-semibold tracking-tight text-ink">
+        <div className="mh-shell flex flex-wrap items-center justify-between gap-2 py-3 sm:gap-3 sm:py-3.5">
+          <div className="flex min-w-0 items-baseline gap-2 sm:gap-3">
+            <NavLink
+              to="/"
+              className="font-display text-xl font-semibold tracking-tight text-ink sm:text-2xl"
+            >
               MaintenanceHub
             </NavLink>
             <span className="hidden text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-faint sm:inline">
@@ -41,7 +44,10 @@ export function Layout() {
             </span>
           </div>
 
-          <nav className="order-3 flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto" aria-label="Primary">
+          <nav
+            className="order-3 flex w-full gap-1 overflow-x-auto pb-0.5 sm:order-none sm:w-auto sm:flex-wrap sm:overflow-visible"
+            aria-label="Primary"
+          >
             {primary.map((l) => (
               <NavLink
                 key={l.to}

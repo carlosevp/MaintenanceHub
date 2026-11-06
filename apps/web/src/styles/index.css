@@ -162,8 +162,15 @@ body {
   }
 
   .mh-label {
-    @apply mb-1 block text-xs font-semibold uppercase tracking-wide;
+    @apply mb-1 block text-xs font-semibold tracking-wide;
     color: var(--mh-ink-muted);
+  }
+
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .mh-eyebrow {

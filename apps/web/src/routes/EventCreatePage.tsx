@@ -51,12 +51,13 @@ export function EventCreatePage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const { can } = useExperience();
-  const quick = params.get("quick") === "1" || params.get("kind") === "manual_outage";
+  const reportingOutage = params.get("kind") === "manual_outage";
+  const quick = params.get("quick") === "1" || reportingOutage;
   const useImpactFlow = can("impact_analysis") && !quick;
   const STEPS: Step[] = useImpactFlow
     ? ["details", "impact", "audience", "review"]
     : ["details", "review"];
-  const initialKind = params.get("kind") === "manual_outage" ? "manual_outage" : "planned_maintenance";
+  const initialKind = reportingOutage ? "manual_outage" : "planned_maintenance";
 
   const [step, setStep] = useState<Step>("details");
   const [showMore, setShowMore] = useState(!quick);
@@ -64,12 +65,21 @@ export function EventCreatePage() {
   const [envs, setEnvs] = useState<Environment[]>([]);
   const [infra, setInfra] = useState<InfraComponent[]>([]);
   const [kind, setKind] = useState(initialKind);
-  const [title, setTitle] = useState(quick ? "Manual outage" : "");
+  // Never prefill "Manual outage" when scheduling planned maintenance via Quick Publish.
+  const [title, setTitle] = useState(reportingOutage ? "Manual outage" : "");
   const [description, setDescription] = useState("");
-  const [impact, setImpact] = useState(quick ? "Service unavailable — investigating" : "");
+  const [impact, setImpact] = useState(
+    reportingOutage ? "Service unavailable — investigating" : "",
+  );
   const [starts, setStarts] = useState("");
   const [ends, setEnds] = useState("");
-  const [timezone, setTimezone] = useState("America/Chicago");
+  const [timezone, setTimezone] = useState(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch {
+      return "UTC";
+    }
+  });
   const [targetKind, setTargetKind] = useState<"application" | "infra_component">("application");
   const [appId, setAppId] = useState("");
   const [envId, setEnvId] = useState("");
@@ -104,12 +114,8 @@ export function EventCreatePage() {
       if (i[0]) setInfraId(i[0].id);
       if (e.find((x) => x.key === "PROD")) setEnvId(e.find((x) => x.key === "PROD")!.id);
       else if (e[0]) setEnvId(e[0].id);
-      const nonProd = e.find((x) => x.key === "NON-PROD");
-      if (nonProd && i.some((x) => x.key.includes("oracle"))) {
-        setTargetKind("infra_component");
-        setInfraId(i.find((x) => x.key.includes("oracle"))!.id);
-        setEnvId(nonProd.id);
-      }
+      // Do not auto-select Oracle/infra for Quick Publish — that conflicts with a simple app window.
+      // Full publish can still pick infra; demo story navigates publishers intentionally.
       try {
         const raw = localStorage.getItem(DRAFT_KEY);
         if (raw && !quick) {
@@ -373,22 +379,26 @@ export function EventCreatePage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="font-display text-3xl font-semibold text-ink-950">
-              {quick
-                ? "Quick Publish outage"
-                : kind === "manual_outage"
-                  ? "Report manual outage"
-                  : "Publish maintenance"}
+              {reportingOutage
+                ? "Report an outage"
+                : quick
+                  ? "Schedule maintenance"
+                  : kind === "manual_outage"
+                    ? "Report an outage"
+                    : "Publish maintenance"}
             </h1>
             <p className="mt-2 text-sm text-ink-muted">
               {useImpactFlow
-                ? "Details → What’s affected → Who’s notified → Review. Confirmed communication is never inferred from the window alone."
-                : "Quick path: fill the essentials and publish. Advanced impact analysis is available on Team/Enterprise profiles."}
+                ? "What, when, impact, then who gets notified. Confirmed communication is never inferred from the window alone."
+                : "What is changing, when, and who it affects. Add more detail only if you need it."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link to="/events/new?quick=1&kind=manual_outage" className="mh-btn-ghost text-sm">
-              Quick Publish
-            </Link>
+            {!reportingOutage && (
+              <Link to="/events/new?quick=1&kind=manual_outage" className="mh-btn-ghost text-sm">
+                Report outage
+              </Link>
+            )}
             <button type="button" className="mh-btn-ghost text-sm" onClick={saveDraft}>
               {draftSaved ? "Draft saved" : "Save draft"}
             </button>
@@ -428,30 +438,80 @@ export function EventCreatePage() {
                 </select>
               </div>
             )}
-            <div>
-              <label className="mh-label" htmlFor="kind">
-                Kind
-              </label>
-              <select id="kind" className="mh-input" value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="planned_maintenance">Planned maintenance</option>
-                <option value="manual_outage">Manual outage</option>
-              </select>
-            </div>
+            {!quick && (
+              <div>
+                <label className="mh-label" htmlFor="kind">
+                  Type
+                </label>
+                <select
+                  id="kind"
+                  className="mh-input"
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value)}
+                >
+                  <option value="planned_maintenance">Planned maintenance</option>
+                  <option value="manual_outage">Manual outage</option>
+                </select>
+              </div>
+            )}
             <div>
               <label className="mh-label" htmlFor="title">
-                Title
+                What
               </label>
               <input
                 id="title"
                 className="mh-input"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                placeholder={reportingOutage ? "e.g. Claims login failures" : "e.g. Payments deploy window"}
                 required
               />
             </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mh-label" htmlFor="starts">
+                  Starts
+                </label>
+                <input
+                  id="starts"
+                  type="datetime-local"
+                  className="mh-input"
+                  value={starts}
+                  onChange={(e) => setStarts(e.target.value)}
+                  required
+                />
+              </div>
+              <div>
+                <label className="mh-label" htmlFor="ends">
+                  Ends
+                </label>
+                <input
+                  id="ends"
+                  type="datetime-local"
+                  className="mh-input"
+                  value={ends}
+                  onChange={(e) => setEnds(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <label className="mh-label" htmlFor="tz">
+                Time zone
+              </label>
+              <input
+                id="tz"
+                className="mh-input"
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                Defaults to your browser/deploy zone ({timezone}). Times above are interpreted here.
+              </p>
+            </div>
             <div>
               <label className="mh-label" htmlFor="impact">
-                What’s affected
+                Impact
               </label>
               <input
                 id="impact"
@@ -467,92 +527,56 @@ export function EventCreatePage() {
               onClick={() => setShowMore((v) => !v)}
               aria-expanded={showMore}
             >
-              {showMore ? "Hide optional details" : "More options"}
+              {showMore ? "Hide more options" : "More options"}
             </button>
             {showMore && (
-              <div>
-                <label className="mh-label" htmlFor="desc">
-                  Description
-                </label>
-                <textarea
-                  id="desc"
-                  className="mh-input"
-                  rows={3}
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                />
-              </div>
-            )}
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mh-label" htmlFor="starts">
-                  Starts (local in selected TZ)
-                </label>
-                <input
-                  id="starts"
-                  type="datetime-local"
-                  className="mh-input"
-                  value={starts}
-                  onChange={(e) => setStarts(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="mh-label" htmlFor="ends">
-                  Ends (local in selected TZ)
-                </label>
-                <input
-                  id="ends"
-                  type="datetime-local"
-                  className="mh-input"
-                  value={ends}
-                  onChange={(e) => setEnds(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
-            <div>
-              <label className="mh-label" htmlFor="tz">
-                Timezone (IANA)
-              </label>
-              <input
-                id="tz"
-                className="mh-input"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-              />
-              <p className="mt-1 text-xs text-ink-500">
-                datetime-local values are interpreted in this zone (not the browser zone).
-              </p>
-            </div>
-
-            {kind === "planned_maintenance" && can("recurrence_editor") && showMore && (
-              <>
-                <RecurrenceEditor
-                  enabled={recurring}
-                  onEnabledChange={setRecurring}
-                  value={recurrence}
-                  onChange={setRecurrence}
-                  startsAt={starts}
-                  endsAt={ends}
-                  timezone={timezone}
-                />
-                {recurring && (
-                  <p className="rounded-md border border-ink-200 bg-accent-soft px-3 py-2 text-xs text-ink-muted">
-                    Series defaults apply to each occurrence. Overrides are edited on the occurrence
-                    detail after publish.
+              <div className="space-y-4 rounded-lg border border-ink-200 bg-surface/50 p-3">
+                <div>
+                  <label className="mh-label" htmlFor="desc">
+                    Message (optional)
+                  </label>
+                  <textarea
+                    id="desc"
+                    className="mh-input"
+                    rows={3}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Extra context for subscribers"
+                  />
+                </div>
+                {kind === "planned_maintenance" && can("recurrence_editor") && (
+                  <>
+                    <RecurrenceEditor
+                      enabled={recurring}
+                      onEnabledChange={setRecurring}
+                      value={recurrence}
+                      onChange={setRecurrence}
+                      startsAt={starts}
+                      endsAt={ends}
+                      timezone={timezone}
+                    />
+                    {recurring && (
+                      <p className="text-xs text-ink-muted">
+                        Series defaults apply to each occurrence. Overrides are edited after publish.
+                      </p>
+                    )}
+                  </>
+                )}
+                {!quick && can("impact_analysis") && (
+                  <p className="text-xs text-ink-muted">
+                    Shared infrastructure impact analysis is available on the next step after details.
                   </p>
                 )}
-              </>
+              </div>
             )}
 
             <fieldset className="rounded-lg border border-ink-200 p-3">
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-500">
-                Primary target
+              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-muted">
+                What’s changing
               </legend>
               <div className="mb-3">
                 <label className="mh-label" htmlFor="targetKind">
-                  Target type
+                  Target
                 </label>
                 <select
                   id="targetKind"
@@ -561,7 +585,7 @@ export function EventCreatePage() {
                   onChange={(e) => setTargetKind(e.target.value as "application" | "infra_component")}
                 >
                   <option value="application">Application</option>
-                  <option value="infra_component">Infrastructure component</option>
+                  {!quick && <option value="infra_component">Infrastructure</option>}
                 </select>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
