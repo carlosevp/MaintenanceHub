@@ -437,7 +437,7 @@ def test_confirm_authz_seed_apps_required(client):
         },
         headers=admin,
     ).json()
-    preview = client.post(
+    denied_preview = client.post(
         "/api/v1/impact-analysis/preview",
         json={
             "seeds": event["impacts"],
@@ -446,23 +446,10 @@ def test_confirm_authz_seed_apps_required(client):
             "event_id": event["id"],
         },
         headers=pub,
-    ).json()
-    denied = client.post(
-        f"/api/v1/impact-analysis/events/{event['id']}/confirm",
-        json={
-            "revision_token": preview["revision_token"],
-            "seeds": event["impacts"],
-            "starts_at": event["starts_at"],
-            "ends_at": event["ends_at"],
-            "include_downstream": [],
-            "publish": True,
-        },
-        headers=pub,
     )
-    assert denied.status_code == 403, denied.text
+    assert denied_preview.status_code == 403, denied_preview.text
 
     _grant_publisher(client, apps["claims"]["id"])
-    # Re-preview after grant (token still valid if graph unchanged)
     preview2 = client.post(
         "/api/v1/impact-analysis/preview",
         json={
@@ -472,11 +459,14 @@ def test_confirm_authz_seed_apps_required(client):
             "event_id": event["id"],
         },
         headers=pub,
-    ).json()
-    ok = client.post(
+    )
+    assert preview2.status_code == 200, preview2.text
+    body = preview2.json()
+    # Invented downstream (not in graph) must be rejected
+    invented = client.post(
         f"/api/v1/impact-analysis/events/{event['id']}/confirm",
         json={
-            "revision_token": preview2["revision_token"],
+            "revision_token": body["revision_token"],
             "seeds": event["impacts"],
             "starts_at": event["starts_at"],
             "ends_at": event["ends_at"],
@@ -491,7 +481,20 @@ def test_confirm_authz_seed_apps_required(client):
         },
         headers=pub,
     )
-    # Downstream billing without grant is OK while retaining owned claims
+    assert invented.status_code == 400, invented.text
+
+    ok = client.post(
+        f"/api/v1/impact-analysis/events/{event['id']}/confirm",
+        json={
+            "revision_token": body["revision_token"],
+            "seeds": event["impacts"],
+            "starts_at": event["starts_at"],
+            "ends_at": event["ends_at"],
+            "include_downstream": [],
+            "publish": True,
+        },
+        headers=pub,
+    )
     assert ok.status_code == 200, ok.text
 
 

@@ -32,6 +32,21 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _norm_selection_rows(rows: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for r in rows or []:
+        out.append(
+            {
+                "t": r.get("target_type"),
+                "i": r.get("target_id"),
+                "e": r.get("environment_id"),
+                "reason": r.get("reason"),
+            }
+        )
+    out.sort(key=lambda x: (x["t"] or "", x["i"] or "", x["e"] or "", x.get("reason") or ""))
+    return out
+
+
 def build_revision_token(
     *,
     seeds: list[ImpactRef],
@@ -41,17 +56,38 @@ def build_revision_token(
     impact_revision: int,
     dependency_fingerprint: str,
     max_depth: int,
+    original_starts_at: datetime | None = None,
+    exclusions: list[dict[str, Any]] | None = None,
+    manual_additions: list[dict[str, Any]] | None = None,
+    proposed: list[ImpactRef] | None = None,
 ) -> str:
+    """Hash reviewed selections + event/occ identity + dependency fingerprint.
+
+    Changing exclusions/manuals/proposed set without re-preview yields a different
+    token and blocks confirm.
+    """
     payload = {
         "seeds": [
             {"t": s.target_type, "i": s.target_id, "e": s.environment_id} for s in seeds
         ],
         "starts_at": starts_at.isoformat() if starts_at else None,
         "ends_at": ends_at.isoformat() if ends_at else None,
+        "original_starts_at": (
+            ensure_utc(original_starts_at).isoformat() if original_starts_at else None
+        ),
         "event_id": event_id,
         "impact_revision": impact_revision,
         "deps": dependency_fingerprint,
         "max_depth": max_depth,
+        "exclusions": _norm_selection_rows(exclusions),
+        "manuals": _norm_selection_rows(manual_additions),
+        "proposed": sorted(
+            [
+                {"t": p.target_type, "i": p.target_id, "e": p.environment_id}
+                for p in (proposed or [])
+            ],
+            key=lambda x: (x["t"] or "", x["i"] or "", x["e"] or ""),
+        ),
     }
     raw = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode()).hexdigest()[:32]
@@ -77,8 +113,12 @@ def preview_notification_audience(
     *,
     event: MaintenanceEvent | None,
     selected_impacts: list[ImpactRef],
+    include_destinations: bool = True,
 ) -> dict[str, Any]:
-    """Estimate unique recipients for a candidate impact set (no sends)."""
+    """Estimate unique recipients for a candidate impact set (no sends).
+
+    When ``include_destinations`` is False, return counts only (privacy harden).
+    """
     from types import SimpleNamespace
 
     # Build an ephemeral event-like object for matching when draft
@@ -94,7 +134,6 @@ def preview_notification_audience(
             for i in selected_impacts
             if i.is_application
         ]
-        # For non-application seeds, matching_subscriptions only uses application impacts
         fake = SimpleNamespace(id="preview-draft", impacts=fake_impacts)
         matched = matching_subscriptions(db, fake, impacts=selected_impacts)  # type: ignore[arg-type]
     else:
@@ -118,13 +157,15 @@ def preview_notification_audience(
     multi = sum(1 for _, n in multi_sub_users.items() if n > 1)
     return {
         "unique_recipients": len(seen_dest),
-        "email_destinations": emails,
-        "teams_bridge_channels": teams,
+        "email_destinations": emails if include_destinations else [],
+        "teams_bridge_channels": teams if include_destinations else [],
         "subscription_count": len(matched),
         "users_with_multiple_subscriptions": multi,
+        "destinations_redacted": not include_destinations,
         "note": (
             "Estimated unique destinations for confirmed impacts — "
             "not a count of outbound delivery rows"
+            + ("; destination addresses redacted" if not include_destinations else "")
         ),
     }
 
@@ -229,6 +270,7 @@ def build_preview(
     exclusions: list[dict[str, Any]] | None = None,
     manual_additions: list[dict[str, Any]] | None = None,
     max_depth: int = dep_analysis.DEFAULT_MAX_DEPTH,
+    include_destinations: bool = True,
 ) -> dict[str, Any]:
     """Assemble full read-only preview — never mutates deliveries/jobs/published state."""
     seed_refs = impacts_from_dicts(seeds)
@@ -334,7 +376,12 @@ def build_preview(
         seen.add(k)
         deduped.append(i)
 
-    audience = preview_notification_audience(db, event=event, selected_impacts=deduped)
+    audience = preview_notification_audience(
+        db,
+        event=event,
+        selected_impacts=deduped,
+        include_destinations=include_destinations,
+    )
     conflicts = find_scheduling_conflicts(
         db,
         starts_at=starts_at,
@@ -351,6 +398,10 @@ def build_preview(
         impact_revision=impact_revision,
         dependency_fingerprint=fp,
         max_depth=max_depth,
+        original_starts_at=original_starts_at,
+        exclusions=exclusions,
+        manual_additions=manual_additions,
+        proposed=deduped,
     )
 
     return {
@@ -416,36 +467,47 @@ def confirm_impact_analysis(
     """Validate revision, persist decisions + effective impacts, optionally confirm+outbox.
 
     Never deletes delivery/audit history. Confirmed occurrence selections are not
-    silently overwritten on later series reanalysis.
+    silently overwritten on later series reanalysis. Concurrent confirms serialize
+    via row lock so only one publish outbox is written per transition.
     """
-    preview = build_preview(
-        db,
-        seeds=seeds,
-        starts_at=starts_at,
-        ends_at=ends_at,
-        event_id=event.id,
-        original_starts_at=original_starts_at,
-        exclusions=exclusions,
-        manual_additions=manual_additions,
-        max_depth=max_depth,
-    )
-    if preview["revision_token"] != revision_token:
-        raise ValueError(
-            "Stale impact preview — dependency graph or event revision changed; re-run preview"
-        )
+    from maintenancehub_api.domain import impact_validation as impact_val
+    from maintenancehub_api.domain.events import _enqueue_outbox, get_event
+    from maintenancehub_api.domain.notifications import schedule_reminders_for_event
 
-    # Explicit include_downstream → seeds + accepted + manuals − exclusions.
-    # Otherwise use preview proposed set (suggestions minus exclusions plus manuals).
+    # Serialize concurrent publishers on the same event (Postgres FOR UPDATE).
+    locked = (
+        db.query(MaintenanceEvent)
+        .filter(MaintenanceEvent.id == event.id)
+        .with_for_update()
+        .first()
+    )
+    if not locked:
+        raise ValueError("Event not found")
+    db.refresh(locked)
+    event = locked
+    baseline_revision = event.impact_revision or 0
+
+    seed_refs = impacts_from_dicts(seeds)
+    for s in seed_refs:
+        impact_val.ensure_catalog_target_exists(db, s)
+
     excl = {
         (x["target_type"], x["target_id"], x.get("environment_id"))
         for x in (exclusions or [])
     }
+    # Catalog existence checked here; grant checks for manuals happen in the API layer.
+    manual_refs = impacts_from_dicts(manual_additions or [])
+    for m in manual_refs:
+        impact_val.ensure_catalog_target_exists(db, m)
+
     if include_downstream is not None:
-        final_refs = impacts_from_dicts(seeds)
-        for row in include_downstream:
-            final_refs.extend(impacts_from_dicts([row]))
-        for row in manual_additions or []:
-            final_refs.extend(impacts_from_dicts([row]))
+        down_refs = impact_val.validate_include_downstream(
+            db,
+            seeds=seed_refs,
+            include_downstream=include_downstream,
+            max_depth=max_depth,
+        )
+        final_refs = list(seed_refs) + list(down_refs) + list(manual_refs)
         seen: set[tuple[str, str, str | None]] = set()
         final: list[ImpactRef] = []
         for r in final_refs:
@@ -454,7 +516,42 @@ def confirm_impact_analysis(
                 continue
             seen.add(k)
             final.append(r)
+        fp = dependency_fingerprint(db)
+        expected = build_revision_token(
+            seeds=seed_refs,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            event_id=event.id,
+            impact_revision=baseline_revision,
+            dependency_fingerprint=fp,
+            max_depth=max_depth,
+            original_starts_at=original_starts_at,
+            exclusions=exclusions,
+            manual_additions=manual_additions,
+            proposed=final,
+        )
+        if expected != revision_token:
+            raise ValueError(
+                "Stale or unreviewed selection — dependency graph, event revision, "
+                "or reviewed impacts changed; re-run preview"
+            )
     else:
+        preview = build_preview(
+            db,
+            seeds=seeds,
+            starts_at=starts_at,
+            ends_at=ends_at,
+            event_id=event.id,
+            original_starts_at=original_starts_at,
+            exclusions=exclusions,
+            manual_additions=manual_additions,
+            max_depth=max_depth,
+            include_destinations=False,
+        )
+        if preview["revision_token"] != revision_token:
+            raise ValueError(
+                "Stale impact preview — dependency graph or event revision changed; re-run preview"
+            )
         final = impacts_from_dicts(
             [
                 {
@@ -466,7 +563,26 @@ def confirm_impact_analysis(
             ]
         )
 
+    # Another publisher may have committed between our lock wait and refresh.
+    if (event.impact_revision or 0) != baseline_revision:
+        raise ValueError(
+            "Stale impact preview — concurrent publisher updated this event; re-run preview"
+        )
+
     now = _now()
+    was_confirmed = event.approval_state == ApprovalState.confirmed_scheduled
+    prior_rows = (
+        db.query(EventImpact).filter(EventImpact.event_id == event.id).all()
+    )
+    prior_impact_keys = {
+        (
+            i.target_type.value if hasattr(i.target_type, "value") else str(i.target_type),
+            i.target_id,
+            i.environment_id,
+        )
+        for i in prior_rows
+    }
+
     decisions: list[ImpactDecision] = []
 
     def _add_decision(
@@ -496,15 +612,20 @@ def confirm_impact_analysis(
             )
         )
 
-    seed_keys = {(s.target_type, s.target_id, s.environment_id) for s in impacts_from_dicts(seeds)}
+    seed_keys = {(s.target_type, s.target_id, s.environment_id) for s in seed_refs}
+    manual_keys = {(m.target_type, m.target_id, m.environment_id) for m in manual_refs}
     for r in final:
-        src = "direct" if (r.target_type, r.target_id, r.environment_id) in seed_keys else "downstream"
-        if any(
-            m.get("target_id") == r.target_id and m.get("target_type") == r.target_type
-            for m in (manual_additions or [])
-        ):
+        k = (r.target_type, r.target_id, r.environment_id)
+        if k in manual_keys:
             src = "manual"
-        _add_decision(ref=r, decision="included" if src != "manual" else "manual", source=src)
+            dec = "manual"
+        elif k in seed_keys:
+            src = "direct"
+            dec = "included"
+        else:
+            src = "downstream"
+            dec = "included"
+        _add_decision(ref=r, decision=dec, source=src)
 
     for x in exclusions or []:
         _add_decision(
@@ -517,7 +638,6 @@ def confirm_impact_analysis(
     for d in decisions:
         db.add(d)
 
-    # Persist impacts — occurrence override vs series
     if original_starts_at is not None:
         from maintenancehub_api.domain import occurrences as occurrence_service
 
@@ -527,18 +647,11 @@ def confirm_impact_analysis(
         record = record or occurrence_service.get_or_create_record(
             db, event, original_starts_at=occ.original_starts_at, actor_id=actor_id
         )
-        # Do not silently overwrite prior confirmed override unless this confirm says so
         record.impacts_overridden = True
         for row in list(record.impacts or []):
             db.delete(row)
         db.flush()
         for r in final:
-            if not r.is_application and r.target_type not in {
-                "application",
-                "service",
-                "infra_component",
-            }:
-                continue
             try:
                 tt = ImpactTargetType(r.target_type)
             except ValueError:
@@ -551,12 +664,11 @@ def confirm_impact_analysis(
                     environment_id=r.environment_id,
                 )
             )
-        from maintenancehub_api.domain.notifications import schedule_reminders_for_event
-
-        schedule_reminders_for_event(db, event)
     else:
-        for row in list(event.impacts or []):
-            db.delete(row)
+        # SQL delete avoids stale identity-map collections under concurrency
+        db.query(EventImpact).filter(EventImpact.event_id == event.id).delete(
+            synchronize_session=False
+        )
         db.flush()
         for r in final:
             try:
@@ -572,8 +684,11 @@ def confirm_impact_analysis(
                 )
             )
 
-    event.impact_revision = (event.impact_revision or 0) + 1
+    event.impact_revision = baseline_revision + 1
     event.updated_by = actor_id
+
+    new_keys = {(r.target_type, r.target_id, r.environment_id) for r in final}
+    impacts_changed = new_keys != prior_impact_keys
 
     db.add(
         EventTimelineEntry(
@@ -591,13 +706,12 @@ def confirm_impact_analysis(
                 "included": len(final),
                 "excluded": len(exclusions or []),
                 "publish": publish,
+                "impacts_changed": impacts_changed,
             },
         )
     )
 
     if publish and event.approval_state != ApprovalState.confirmed_scheduled:
-        from maintenancehub_api.domain.events import _enqueue_outbox
-
         previous = event.approval_state
         event.approval_state = ApprovalState.confirmed_scheduled
         db.add(
@@ -624,16 +738,34 @@ def confirm_impact_analysis(
                 "via": "impact_analysis_confirm",
             },
         )
+    elif was_confirmed and impacts_changed:
+        # Recalculate audience path via outbox; do not re-send unchanged deliveries
+        # (idempotency keys + reminder reconcile). Never notify excluded-only apps.
+        _enqueue_outbox(
+            db,
+            event=event,
+            event_type="event.impacts_changed",
+            payload={
+                "via": "impact_analysis_confirm",
+                "impact_revision": event.impact_revision,
+            },
+        )
 
-    db.commit()
-    if publish and event.approval_state == ApprovalState.confirmed_scheduled:
-        from maintenancehub_api.domain.notifications import schedule_reminders_for_event
-        from maintenancehub_api.domain.events import get_event
+    try:
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        # Concurrent insert races (should be rare after FOR UPDATE) → stale
+        from sqlalchemy.exc import IntegrityError
 
+        if isinstance(exc, IntegrityError):
+            raise ValueError(
+                "Stale impact preview — concurrent publisher updated this event; re-run preview"
+            ) from exc
+        raise
+    refreshed = get_event(db, event.id)
+    if refreshed and refreshed.approval_state == ApprovalState.confirmed_scheduled:
+        # Reconcile pending reminders to new effective impacts; keep sent history.
+        schedule_reminders_for_event(db, refreshed)
         refreshed = get_event(db, event.id)
-        if refreshed:
-            schedule_reminders_for_event(db, refreshed)
-            return refreshed
-    from maintenancehub_api.domain.events import get_event
-
-    return get_event(db, event.id)  # type: ignore[return-value]
+    return refreshed  # type: ignore[return-value]

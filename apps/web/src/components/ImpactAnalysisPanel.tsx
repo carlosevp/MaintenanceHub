@@ -1,10 +1,18 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   api,
   type ImpactPreview,
   type ImpactSeed,
   type SuggestedImpact,
 } from "@/api/client";
+import {
+  createPreviewRequestGate,
+  impactSeedKey,
+  selectionFingerprint,
+  type ConfirmReady,
+  type ExclusionRow,
+} from "@/lib/impactPreviewSession";
+import { seedsKey } from "@/lib/zonedDateTime";
 
 type Props = {
   seeds: ImpactSeed[];
@@ -12,13 +20,13 @@ type Props = {
   endsAt: string;
   eventId?: string | null;
   originalStartsAt?: string | null;
-  onConfirmReady?: (state: {
-    revisionToken: string;
-    exclusions: Array<ImpactSeed & { reason?: string }>;
-    manualAdditions: ImpactSeed[];
-    includeDownstream: ImpactSeed[];
-    preview: ImpactPreview;
-  }) => void;
+  /** Lifted reviewed decisions — survive Details ↔ Impact navigation */
+  exclusions: ExclusionRow[];
+  manuals: ImpactSeed[];
+  onExclusionsChange: (rows: ExclusionRow[]) => void;
+  onManualsChange: (rows: ImpactSeed[]) => void;
+  onConfirmReady: (state: ConfirmReady | null) => void;
+  onPreviewStatus: (status: { busy: boolean; error: string | null; ok: boolean }) => void;
 };
 
 function pathLabel(sug: SuggestedImpact): string {
@@ -42,72 +50,94 @@ export function ImpactAnalysisPanel({
   endsAt,
   eventId,
   originalStartsAt,
+  exclusions,
+  manuals,
+  onExclusionsChange,
+  onManualsChange,
   onConfirmReady,
+  onPreviewStatus,
 }: Props) {
   const baseId = useId();
   const [preview, setPreview] = useState<ImpactPreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [excluded, setExcluded] = useState<
-    Record<string, { reason: string; row: SuggestedImpact }>
-  >({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [manualAppId, setManualAppId] = useState("");
   const [manualEnvId, setManualEnvId] = useState("");
-  const [manuals, setManuals] = useState<ImpactSeed[]>([]);
   const [apps, setApps] = useState<Array<{ id: string; name: string }>>([]);
   const [envs, setEnvs] = useState<Array<{ id: string; key: string }>>([]);
+  const gateRef = useRef(createPreviewRequestGate());
+  const onConfirmReadyRef = useRef(onConfirmReady);
+  const onPreviewStatusRef = useRef(onPreviewStatus);
+  onConfirmReadyRef.current = onConfirmReady;
+  onPreviewStatusRef.current = onPreviewStatus;
 
-  function sugKey(s: { target_type: string; target_id: string; environment_id?: string | null }) {
-    return `${s.target_type}:${s.target_id}:${s.environment_id ?? ""}`;
-  }
+  const excludedMap = Object.fromEntries(
+    exclusions.map((e) => [impactSeedKey(e), e]),
+  );
 
-  async function runPreview(
-    nextExcluded: typeof excluded = excluded,
-    nextManuals: ImpactSeed[] = manuals,
-  ) {
+  async function runPreview(nextExclusions: ExclusionRow[] = exclusions, nextManuals: ImpactSeed[] = manuals) {
     if (!seeds.length || !startsAt || !endsAt) return;
+    const reqId = gateRef.current.next();
+    // Selection change immediately invalidates any prior confirm token
+    onConfirmReadyRef.current(null);
     setBusy(true);
     setError(null);
+    onPreviewStatusRef.current({ busy: true, error: null, ok: false });
     try {
-      const exclusions = Object.values(nextExcluded).map(({ reason, row }) => ({
-        target_type: row.target_type,
-        target_id: row.target_id,
-        environment_id: row.environment_id ?? null,
-        reason: reason || "Excluded by publisher",
-      }));
       const body = {
         seeds,
         starts_at: startsAt,
         ends_at: endsAt,
         event_id: eventId || undefined,
         original_starts_at: originalStartsAt || undefined,
-        exclusions,
+        exclusions: nextExclusions.map((e) => ({
+          target_type: e.target_type,
+          target_id: e.target_id,
+          environment_id: e.environment_id ?? null,
+          reason: e.reason || "Excluded by publisher",
+        })),
         manual_additions: nextManuals,
         max_depth: 5,
       };
       const p = await api.impactPreview(body);
+      if (!gateRef.current.isCurrent(reqId)) return;
       setPreview(p);
       const includeDownstream = (p.suggested_downstream || [])
         .filter((s) => s.selection !== "excluded")
-        .filter((s) => !nextExcluded[sugKey(s)])
+        .filter((s) => !nextExclusions.some((e) => impactSeedKey(e) === impactSeedKey(s)))
         .map((s) => ({
           target_type: s.target_type,
           target_id: s.target_id,
           environment_id: s.environment_id ?? null,
         }));
-      onConfirmReady?.({
+      const exclusionsNormalized = nextExclusions.map((e) => ({
+        ...e,
+        reason: e.reason || "Excluded by publisher",
+      }));
+      const ready: ConfirmReady = {
         revisionToken: p.revision_token,
-        exclusions,
+        exclusions: exclusionsNormalized,
         manualAdditions: nextManuals,
         includeDownstream,
-        preview: p,
-      });
+        selectionFingerprint: selectionFingerprint(
+          exclusionsNormalized,
+          nextManuals,
+          includeDownstream,
+        ),
+      };
+      onConfirmReadyRef.current(ready);
+      onPreviewStatusRef.current({ busy: false, error: null, ok: true });
+      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Preview failed");
+      if (!gateRef.current.isCurrent(reqId)) return;
+      const msg = err instanceof Error ? err.message : "Preview failed";
+      setError(msg);
       setPreview(null);
+      onConfirmReadyRef.current(null);
+      onPreviewStatusRef.current({ busy: false, error: msg, ok: false });
     } finally {
-      setBusy(false);
+      if (gateRef.current.isCurrent(reqId)) setBusy(false);
     }
   }
 
@@ -121,26 +151,61 @@ export function ImpactAnalysisPanel({
     })();
   }, []);
 
+  const seedFp = seedsKey(seeds);
   useEffect(() => {
-    void runPreview();
+    void runPreview(exclusions, manuals);
+    // Re-run when window/seeds/event identity change — not on every parent callback identity
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seeds, startsAt, endsAt, eventId, originalStartsAt, manuals]);
+  }, [seedFp, startsAt, endsAt, eventId, originalStartsAt]);
 
   function toggleExclude(row: SuggestedImpact) {
-    const key = sugKey(row);
-    const next = { ...excluded };
-    if (next[key]) delete next[key];
-    else next[key] = { reason: "Excluded by publisher", row };
-    setExcluded(next);
+    const key = impactSeedKey(row);
+    const exists = exclusions.some((e) => impactSeedKey(e) === key);
+    const next = exists
+      ? exclusions.filter((e) => impactSeedKey(e) !== key)
+      : [
+          ...exclusions,
+          {
+            target_type: row.target_type,
+            target_id: row.target_id,
+            environment_id: row.environment_id ?? null,
+            reason: "Excluded by publisher",
+          },
+        ];
+    onExclusionsChange(next);
     void runPreview(next, manuals);
   }
 
+  function commitExclusionReason(row: SuggestedImpact, reason: string) {
+    const key = impactSeedKey(row);
+    const next = exclusions.map((e) =>
+      impactSeedKey(e) === key ? { ...e, reason } : e,
+    );
+    onExclusionsChange(next);
+    void runPreview(next, manuals);
+  }
+
+  function addManual() {
+    if (!manualAppId) return;
+    const row: ImpactSeed = {
+      target_type: "application",
+      target_id: manualAppId,
+      environment_id: manualEnvId || null,
+    };
+    if (manuals.some((m) => impactSeedKey(m) === impactSeedKey(row))) return;
+    const next = [...manuals, row];
+    onManualsChange(next);
+    void runPreview(exclusions, next);
+  }
+
+  function removeManual(index: number) {
+    const next = manuals.filter((_, j) => j !== index);
+    onManualsChange(next);
+    void runPreview(exclusions, next);
+  }
+
   return (
-    <section
-      className="space-y-4"
-      aria-labelledby={`${baseId}-heading`}
-      aria-busy={busy}
-    >
+    <section className="space-y-4" aria-labelledby={`${baseId}-heading`} aria-busy={busy}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h2 id={`${baseId}-heading`} className="font-display text-xl font-semibold text-ink-950">
@@ -151,13 +216,21 @@ export function ImpactAnalysisPanel({
             publish. Preview never sends notifications.
           </p>
         </div>
-        <button type="button" className="mh-btn-ghost" onClick={() => void runPreview()} disabled={busy}>
+        <button
+          type="button"
+          className="mh-btn-ghost"
+          onClick={() => void runPreview()}
+          disabled={busy}
+        >
           {busy ? "Analyzing…" : "Refresh preview"}
         </button>
       </div>
 
       {error && (
-        <p className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
+        <p
+          className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger"
+          role="alert"
+        >
           {error}
         </p>
       )}
@@ -200,7 +273,7 @@ export function ImpactAnalysisPanel({
             <h3 className="text-sm font-semibold text-ink-800">Direct targets</h3>
             <ul className="mt-2 divide-y divide-ink-100 rounded-lg border border-ink-200">
               {preview.direct_targets.map((d) => (
-                <li key={sugKey(d)} className="px-3 py-2 text-sm">
+                <li key={impactSeedKey(d)} className="px-3 py-2 text-sm">
                   <span className="font-medium text-ink-900">{d.display_name}</span>
                   <span className="text-ink-500">
                     {" "}
@@ -223,8 +296,8 @@ export function ImpactAnalysisPanel({
                 <li className="px-3 py-2 text-sm text-ink-500">No recorded dependents.</li>
               )}
               {preview.suggested_downstream.map((s) => {
-                const key = sugKey(s);
-                const isEx = Boolean(excluded[key]) || s.selection === "excluded";
+                const key = impactSeedKey(s);
+                const isEx = Boolean(excludedMap[key]) || s.selection === "excluded";
                 const open = expanded[key];
                 return (
                   <li key={key} className="px-3 py-2">
@@ -241,14 +314,6 @@ export function ImpactAnalysisPanel({
                       <span className="rounded bg-ink-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-ink-600">
                         {s.classification}
                       </span>
-                      {s.origins?.map((o) => (
-                        <span
-                          key={o}
-                          className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent"
-                        >
-                          {o}
-                        </span>
-                      ))}
                       <div className="ml-auto flex gap-2">
                         <button
                           type="button"
@@ -265,13 +330,8 @@ export function ImpactAnalysisPanel({
                         Exclusion reason
                         <input
                           className="mh-input mt-1"
-                          value={excluded[key]?.reason ?? ""}
-                          onChange={(e) =>
-                            setExcluded((prev) => ({
-                              ...prev,
-                              [key]: { reason: e.target.value, row: s },
-                            }))
-                          }
+                          defaultValue={excludedMap[key]?.reason ?? ""}
+                          onBlur={(e) => commitExclusionReason(s, e.target.value)}
                         />
                       </label>
                     )}
@@ -320,21 +380,7 @@ export function ImpactAnalysisPanel({
                   </option>
                 ))}
               </select>
-              <button
-                type="button"
-                className="mh-btn-ghost"
-                onClick={() => {
-                  if (!manualAppId) return;
-                  setManuals((m) => [
-                    ...m,
-                    {
-                      target_type: "application",
-                      target_id: manualAppId,
-                      environment_id: manualEnvId || null,
-                    },
-                  ]);
-                }}
-              >
+              <button type="button" className="mh-btn-ghost" onClick={addManual}>
                 Add
               </button>
             </div>
@@ -351,7 +397,7 @@ export function ImpactAnalysisPanel({
                     <button
                       type="button"
                       className="text-xs text-danger underline"
-                      onClick={() => setManuals((list) => list.filter((_, j) => j !== i))}
+                      onClick={() => removeManual(i)}
                     >
                       Remove
                     </button>
@@ -375,20 +421,25 @@ export function ImpactAnalysisPanel({
                   <dd className="font-semibold">{preview.audience.subscription_count}</dd>
                 </div>
               </dl>
-              {preview.audience.email_destinations.length > 0 && (
-                <ul className="mt-2 max-h-28 overflow-auto text-xs text-ink-700" aria-label="Email destinations">
-                  {preview.audience.email_destinations.map((e) => (
-                    <li key={e}>{e}</li>
-                  ))}
-                </ul>
-              )}
-              {preview.audience.teams_bridge_channels.length > 0 && (
-                <ul className="mt-1 text-xs text-ink-700" aria-label="Teams bridge channels">
-                  {preview.audience.teams_bridge_channels.map((t) => (
-                    <li key={t}>Teams: {t}</li>
-                  ))}
-                </ul>
-              )}
+              {!preview.audience.destinations_redacted &&
+                preview.audience.email_destinations.length > 0 && (
+                  <ul
+                    className="mt-2 max-h-28 overflow-auto text-xs text-ink-700"
+                    aria-label="Email destinations"
+                  >
+                    {preview.audience.email_destinations.map((e) => (
+                      <li key={e}>{e}</li>
+                    ))}
+                  </ul>
+                )}
+              {!preview.audience.destinations_redacted &&
+                preview.audience.teams_bridge_channels.length > 0 && (
+                  <ul className="mt-1 text-xs text-ink-700" aria-label="Teams bridge channels">
+                    {preview.audience.teams_bridge_channels.map((t) => (
+                      <li key={t}>Teams: {t}</li>
+                    ))}
+                  </ul>
+                )}
             </div>
             <div className="rounded-lg border border-ink-200 p-3">
               <h3 className="text-sm font-semibold text-ink-800">Scheduling conflicts</h3>
@@ -398,7 +449,10 @@ export function ImpactAnalysisPanel({
               ) : (
                 <ul className="mt-2 space-y-2 text-sm">
                   {preview.conflicts.map((c) => (
-                    <li key={`${c.event_id}-${c.occurrence_id}`} className="rounded border border-ink-100 px-2 py-1.5">
+                    <li
+                      key={`${c.event_id}-${c.occurrence_id}`}
+                      className="rounded border border-ink-100 px-2 py-1.5"
+                    >
                       <p className="font-medium text-ink-900">{c.title}</p>
                       <p className="text-xs text-ink-600">
                         {c.classification} — {c.explanation}

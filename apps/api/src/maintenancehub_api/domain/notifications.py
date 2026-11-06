@@ -577,6 +577,9 @@ def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, A
         "event.transitioned": "event.transitioned",
         "event.extended": "event.extended",
         "event.rescheduled": "event.rescheduled",
+        # Impact set changed on an already-published event — reuse created template;
+        # delivery idempotency prevents resending unchanged recipient/reason pairs.
+        "event.impacts_changed": "event.created",
     }
     template_key = mapping.get(event_type, event_type)
     if template_key not in DEFAULT_TEMPLATES:
@@ -585,8 +588,13 @@ def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, A
     n = enqueue_deliveries_for_event(
         db, event, template_key=template_key, extra_context=extra, reason=template_key
     )
-    # On create / schedule, also schedule advance reminders
-    if event_type in {"event.created", "event.confirmed", "event.rescheduled"} or template_key in {
+    # On create / schedule / impact change, reconcile advance reminders to effective impacts
+    if event_type in {
+        "event.created",
+        "event.confirmed",
+        "event.rescheduled",
+        "event.impacts_changed",
+    } or template_key in {
         "event.created",
         "event.rescheduled",
     }:

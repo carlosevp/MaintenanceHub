@@ -1,8 +1,8 @@
 # MaintenanceHub implementation audit
 
-**Branch audited:** `cursor/m14-impact-preview-6e6d` (M14 Impact Analysis & Notification Preview on hardened PR #8 tip `cursor/occurrence-lifecycle-0ed4`)  
+**Branch audited:** `cursor/m14-impact-preview-6e6d` (M14 Impact Analysis & Notification Preview + harden on PR #8 tip)  
 **Sources of truth:** Project store product-brief / PRD / ADRs / data-model / api-contracts / milestone-plan; repo `docs/LIMITATIONS.md`; actual source (not class existence alone).  
-**Date:** 2026-11-04
+**Date:** 2026-11-06
 
 ## Executive summary
 
@@ -116,24 +116,23 @@ Global RBAC was always enforced. **Application grants are now enforced** on even
 
 ---
 
-### M14 Impact analysis (this PR)
+### M14 Impact analysis (+ harden)
 
 - Domain: reverse BFS consumers←providers; max depth; cycles; path provenance; CMDB+manual origins; freshness warnings; **no confidence %**; absent deps ≠ none.
-- Preview API read-only (no jobs/outbox/deliveries). Confirm validates `revision_token`, persists `ImpactDecision`, optional promote to `confirmed_scheduled` + outbox.
-- Authz: grants required on **seed** apps; downstream includes are notify-reach only.
-- Seed: Oracle NON-PROD → Claims INT / Billing DEV / Member API QA + Portal BFF→Member transitive; recurring series with one occurrence override; overlap conflict demo.
-- UI: two-step publish (Details → Impact Analysis) with exclude/manual/reach/conflicts.
+- Preview API read-only; **publisher-only**; destination addresses redacted without seed-app grants; counts always returned.
+- Confirm: server validates `include_downstream` ⊆ calculated suggestions; manuals require real IDs + grants; revision token covers selections/exclusions/manuals + event/occ identity; `FOR UPDATE` + refresh prevents lost updates / duplicate `event.confirmed`.
+- Already-published impact changes enqueue `event.impacts_changed`, reconcile reminders, keep delivery history (no resend unchanged; excluded apps drop pending).
+- UI: stable preview gate (ignore stale async); lifted exclusions/manuals across Details↔Impact; failed preview disables publish; datetime-local interpreted in selected IANA TZ.
+- Seed: Oracle NON-PROD demo graph unchanged.
 
-## Functional demo checklist (executed on M14 tip)
+## Functional demo checklist (executed on M14 harden tip)
 
 | Check | Command / action | Result |
 |-------|------------------|--------|
-| Full pytest (+ Postgres) | `pytest tests -q` | **112 passed** (incl. M14 + Postgres migration/lifecycle/concurrency) |
-| Banner package | `cd packages/banner && npm test && npm run build` | Prior package tests |
-| Web vitest + production build | `cd apps/web && npm test && npm run build` | **5 passed**, build OK |
+| Full pytest (+ Postgres) | `TEST_POSTGRES_URL=… pytest tests -q` | **118 passed** |
+| Web vitest + production build | `cd apps/web && npm test && npm run build` | **14 passed**, build OK |
 | Lint | `make lint` | **All checks passed** |
-| E2E A–I | `tests/api/test_reconcile_e2e.py` | Pass |
-| Postgres M14 | `tests/migrations/test_postgres_m14_impact.py` | Pass |
+| Postgres M14 + concurrent confirm | `test_postgres_m14_*.py` | Pass |
 | E2E J Postgres concurrency | `tests/worker/test_postgres_concurrency.py` | Pass |
 
 Local: `make install && make migrate && make api` / `make worker` / `make web` → `publisher@demo.example.com` / `password123`.  

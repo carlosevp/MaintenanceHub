@@ -152,6 +152,7 @@ export type ImpactPreview = {
     teams_bridge_channels: string[];
     subscription_count: number;
     users_with_multiple_subscriptions: number;
+    destinations_redacted?: boolean;
     note: string;
   };
   conflicts: Array<{
