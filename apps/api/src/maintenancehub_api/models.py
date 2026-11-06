@@ -741,15 +741,70 @@ class ReminderOffset(Base):
 
 class NotificationTemplate(Base):
     __tablename__ = "notification_templates"
+    __table_args__ = (
+        Index("ix_notification_templates_event_type", "event_type"),
+        Index("ix_notification_templates_status", "status"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     key: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Lifecycle event this template is selected for (e.g. event.created).
+    event_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    # active | inactive | archived
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     channel: Mapped[str] = mapped_column(String(32), default="smtp", nullable=False)
     subject_template: Mapped[str] = mapped_column(Text, nullable=False)
+    # Legacy single body (kept in sync with body_plain_template for older callers).
     body_template: Mapped[str] = mapped_column(Text, nullable=False)
+    body_html_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    body_plain_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
+    versions: Mapped[list["NotificationTemplateVersion"]] = relationship(
+        back_populates="template",
+        cascade="all, delete-orphan",
+        order_by="NotificationTemplateVersion.version.desc()",
+    )
+
+
+class NotificationTemplateVersion(Base):
+    """Immutable snapshot of a template after each save (M19)."""
+
+    __tablename__ = "notification_template_versions"
+    __table_args__ = (
+        UniqueConstraint("template_id", "version", name="uq_template_version"),
+        Index("ix_notification_template_versions_template", "template_id", "version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    template_id: Mapped[str] = mapped_column(
+        ForeignKey("notification_templates.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    event_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    channel: Mapped[str] = mapped_column(String(32), nullable=False)
+    subject_template: Mapped[str] = mapped_column(Text, nullable=False)
+    body_template: Mapped[str] = mapped_column(Text, nullable=False)
+    body_html_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    body_plain_template: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    change_note: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    changed_by: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    template: Mapped["NotificationTemplate"] = relationship(back_populates="versions")
 
 
 class CalendarToken(Base):
@@ -828,6 +883,12 @@ class NotificationDelivery(Base):
     destination: Mapped[str] = mapped_column(String(320), nullable=False)
     subject: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    body_html: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    body_plain: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    template_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    template_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Full rendered snapshot persisted before send (subject/html/plain/routing).
+    rendered_payload: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
     event_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     subscription_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
     status: Mapped[DeliveryStatus] = mapped_column(

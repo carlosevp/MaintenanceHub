@@ -1,0 +1,20 @@
+# Sample system template: pa.teams_alert
+# Subject is a Power Automate trigger filter. Body "To:" is PA routing — not SMTP To.
+
+SUBJECT: [TEAMS] Maintenance Alert
+
+PLAIN BODY:
+To: {{teams_target_email}}
+
+MaintenanceHub notice (human-published — not monitoring).
+
+Title: {{title}}
+Status: {{status}}
+Communication: {{approval_label}} ({{approval_state}})
+Window: {{starts_at}} → {{ends_at}} ({{timezone}})
+Impact: {{expected_impact}}
+Channel: {{bridge_channel_key}}
+Detail: {{detail_url}}
+
+Power Automate: parse the first body line `To: <email>` as the Teams
+routing address. The SMTP envelope recipient is the bridge mailbox.

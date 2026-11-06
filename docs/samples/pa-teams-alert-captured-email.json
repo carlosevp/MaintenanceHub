@@ -1,0 +1,14 @@
+{
+  "id": "log-sample000001",
+  "channel": "bridge",
+  "to": "bridge-mailbox@example.com",
+  "subject": "[TEAMS] Maintenance Alert",
+  "body": "To: ops-channel@contoso.com\n\nMaintenanceHub notice (human-published — not monitoring).\n\nTitle: Test notification\nStatus: scheduled\nCommunication: Confirmed (confirmed_scheduled)\nWindow: 2026-11-10T02:00:00Z → 2026-11-10T04:00:00Z (UTC)\nImpact: None (test)\nChannel: ops-payments\nDetail: https://mh.example.com/events/…\n\nPower Automate: parse the first body line `To: <email>` as the Teams routing address. The SMTP envelope recipient is the bridge mailbox.\n",
+  "body_html": "<p><strong>To:</strong> ops-channel@contoso.com</p><p>MaintenanceHub notice (human-published — not monitoring).</p>…",
+  "captured_at": "2026-11-06T18:00:00+00:00",
+  "notes": {
+    "smtp_to": "bridge-mailbox@example.com",
+    "pa_routing_to": "ops-channel@contoso.com",
+    "distinction": "SMTP To delivers into the PA mailbox; body To: selects the Teams destination inside the flow."
+  }
+}

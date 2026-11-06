@@ -63,6 +63,12 @@ class DeliveryOut(ORMModel):
     destination_type: str
     destination: str
     subject: Optional[str] = None
+    body: Optional[str] = None
+    body_html: Optional[str] = None
+    body_plain: Optional[str] = None
+    template_id: Optional[str] = None
+    template_version: Optional[int] = None
+    rendered_payload: Optional[dict] = None
     status: str
     attempt_count: int
     last_error: Optional[str] = None
@@ -74,14 +80,61 @@ class DeliveryOut(ORMModel):
 class TemplateOut(ORMModel):
     id: str
     key: str
+    name: Optional[str] = None
+    description: Optional[str] = None
+    event_type: Optional[str] = None
+    status: str = "active"
     channel: str
     subject_template: str
     body_template: str
+    body_plain_template: Optional[str] = None
+    body_html_template: Optional[str] = None
+    version: int = 1
+    is_system: bool = False
+    created_by: Optional[str] = None
+    updated_by: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 class TemplatePatch(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    event_type: Optional[str] = None
+    channel: Optional[str] = None
     subject_template: Optional[str] = None
     body_template: Optional[str] = None
+    body_plain_template: Optional[str] = None
+    body_html_template: Optional[str] = None
+    change_note: Optional[str] = None
+
+
+class TemplateCreate(BaseModel):
+    key: str
+    name: str
+    event_type: str
+    subject_template: str
+    body_plain_template: str
+    body_html_template: Optional[str] = None
+    channel: str = "smtp"
+    description: Optional[str] = None
+    activate: bool = True
+
+
+class TemplateCloneRequest(BaseModel):
+    new_key: Optional[str] = None
+    new_name: Optional[str] = None
+
+
+class TemplatePreviewRequest(BaseModel):
+    context: dict = Field(default_factory=dict)
+    subject_template: Optional[str] = None
+    body_plain_template: Optional[str] = None
+    body_html_template: Optional[str] = None
+
+
+class TemplateRestoreRequest(BaseModel):
+    version: int
 
 
 class TestSendRequest(BaseModel):
@@ -89,7 +142,10 @@ class TestSendRequest(BaseModel):
     destination_type: str = "email_address"
     destination: str
     bridge_channel_key: Optional[str] = None
+    teams_target_email: Optional[str] = None
     context: dict = Field(default_factory=dict)
+    # When true (default), prefer demo capture / log sink semantics in the response note.
+    capture_only: bool = False
 
 
 class CalendarTokenCreate(BaseModel):

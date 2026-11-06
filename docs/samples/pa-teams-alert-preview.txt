@@ -1,0 +1,17 @@
+SUBJECT: [TEAMS] Maintenance Alert
+
+BODY:
+To: ops-payments-channel@example.com
+
+MaintenanceHub notice (human-published — not monitoring).
+
+Title: Claims INT batch window
+Status: in_progress
+Communication: Confirmed (confirmed_scheduled)
+Window: 2026-11-10T02:00:00Z → 2026-11-10T04:00:00Z (America/Chicago)
+Impact: Brief read-only
+Channel: ops-payments
+Detail: https://mh.example.com/events/…
+
+Power Automate: parse the first body line `To: <email>` as the Teams
+routing address. The SMTP envelope recipient is the bridge mailbox.
