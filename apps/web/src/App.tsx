@@ -11,6 +11,14 @@ import { EventCreatePage } from "@/routes/EventCreatePage";
 import { SubscriptionsPage } from "@/routes/SubscriptionsPage";
 import { BannerDemoPage } from "@/routes/BannerDemoPage";
 import { AboutPage } from "@/routes/AboutPage";
+import { AdminShell } from "@/routes/admin/AdminShell";
+import { AdminOverviewPage } from "@/routes/admin/AdminOverviewPage";
+import { AdminCatalogPage } from "@/routes/admin/AdminCatalogPage";
+import { AdminServiceNowPage } from "@/routes/admin/AdminServiceNowPage";
+import { AdminNotificationsPage } from "@/routes/admin/AdminNotificationsPage";
+import { AdminUsersPage } from "@/routes/admin/AdminUsersPage";
+import { AdminJobsPage } from "@/routes/admin/AdminJobsPage";
+import { AdminAuditPage } from "@/routes/admin/AdminAuditPage";
 import type { ReactNode } from "react";
 
 function RequireAuth({ children }: { children: ReactNode }) {
@@ -47,6 +55,15 @@ export default function App() {
           <Route path="about" element={<AboutPage />} />
           <Route path="events/new" element={<EventCreatePage />} />
           <Route path="events/:id" element={<EventDetailPage />} />
+          <Route path="admin" element={<AdminShell />}>
+            <Route index element={<AdminOverviewPage />} />
+            <Route path="catalog" element={<AdminCatalogPage />} />
+            <Route path="servicenow" element={<AdminServiceNowPage />} />
+            <Route path="notifications" element={<AdminNotificationsPage />} />
+            <Route path="users" element={<AdminUsersPage />} />
+            <Route path="jobs" element={<AdminJobsPage />} />
+            <Route path="audit" element={<AdminAuditPage />} />
+          </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

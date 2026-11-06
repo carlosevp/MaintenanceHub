@@ -9,14 +9,14 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 | **M0–M4** | **Functional** via API + primary UI (catalog, one-time scheduling, dashboard/calendar). |
 | **M3b Recurrence** | **Implemented** (see [recurrence.md](./recurrence.md)): RRULE weekly/monthly/daily/custom; multi-weekday; interval; until/count; IANA TZ + DST expansion; exceptions; series scopes `this` / `this_and_future` / `all`; calendar + dashboard + ICS share expansion; stable occurrence ids; per-occurrence reminder idempotency. Occurrences expanded for bounded windows only. |
 | **M5–M8** | **Functional** jobs, SMTP/log, Teams-via-email-bridge, ICS. **Digest worker = schema-only.** Support-group subscription targets do not match. |
-| **M9 ServiceNow poll** | **Functional** null/fixture/HTTP poll, upsert by sys_id, cancel, unmatched resolve. Impacts attached **only when** `ExternalCiLink` maps `cmdb_ci` → application. Push/webhooks = interface stub. **No admin UI** (API only). |
-| **M10 CMDB CSV** | **Functional** preview/commit/history via **admin API only** — no web UI. |
-| **M11 Enterprise auth** | Fail-closed `local_dev`; OIDC/LDAP **mock** for local/tests. Live IdP exchange/bind need real config. |
+| **M9 ServiceNow poll** | **Functional** null/fixture/HTTP poll, upsert by sys_id, cancel, unmatched resolve + **Admin UI** (status without secrets, dry-run, poll-now, unmatched). Impacts attached **only when** `ExternalCiLink` maps `cmdb_ci` → application. Push/webhooks = interface stub. |
+| **M10 CMDB CSV** | **Functional** preview/commit/history via admin API + **Admin UI**. Partial CSV never deletes absent relationships. |
+| **M11 Enterprise auth** | Fail-closed `local_dev`; OIDC/LDAP **mock** for local/tests. Live IdP exchange/bind need real config. Admin surfaces prepare for AD; **no fake production AD login**. |
 | **M12 Banner** | **Functional** package + `/api/v1/public/banner`. Public DTO is **unauthenticated** (browser-safe). Do **not** embed `client_secret` in frontends. |
 | **M13 Demo / deploy** | Seed + Compose (Postgres) + OpenShift manifests. Web nginx uses `API_UPSTREAM`. Production must run Alembic (no `create_all`). |
-| **Application-scoped grants** | **Enforced** on event mutations (incl. series/occurrence edits) and application updates. Creator auto-granted. Directory-group grants and fine-grained catalog CRUD still limited. |
-| **M14 Impact analysis** | **Implemented + hardened**: dependency reverse traversal, publisher-scoped preview (destination redaction), server-validated confirm selections, selection-aware revision tokens, concurrent confirm locking, impact-change reminder reconcile, IANA TZ datetime-local, publish-flow UX stability. **Advisory only** — conflicts never block publish; no auto health; graph quality depends on CMDB/manual edges (absent ≠ none). Infra write admin UX still thin. Compose browser demo still requires local stack. |
-| **Admin UX** | SN unmatched, CSV import, service credentials, audit, jobs, role mappings — **API-only** (no in-app admin screens). |
+| **Application-scoped grants** | **Enforced** on event mutations and application updates. **Admin UI** for grant CRUD + group→role maps. Directory-group → ApplicationGrant auto-provision still limited. |
+| **M14 Impact analysis** | **Implemented + hardened**: dependency reverse traversal, publisher-scoped preview, confirm with revision tokens, etc. Advisory only; graph quality depends on CMDB/manual edges. |
+| **M15 Admin workspace** | **Implemented**: `/admin` Overview, Apps/Deps, SN/CMDB, Notifications, Users/Permissions, Jobs/Delivery, Audit. API authz required. Secrets are env/OpenShift only (status/redaction; no secret editor). See [administration.md](./administration.md). |
 | **Native mobile / Redis / RabbitMQ** | Out of scope. |
 
 ## Recurrence / occurrence caveats (known)

@@ -15,6 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from maintenancehub_api.api import (
     admin_integrations,
     admin_jobs,
+    admin_workspace,
     auth,
     banner,
     calendar_tokens,
@@ -125,6 +126,7 @@ def create_app() -> FastAPI:
     app.include_router(notifications.router, prefix="/api/v1")
     app.include_router(admin_jobs.router, prefix="/api/v1")
     app.include_router(admin_integrations.router, prefix="/api/v1")
+    app.include_router(admin_workspace.router, prefix="/api/v1")
     app.include_router(banner.router, prefix="/api/v1")
     app.include_router(calendar_tokens.router, prefix="/api/v1")
 

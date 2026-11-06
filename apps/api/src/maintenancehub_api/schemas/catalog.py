@@ -71,6 +71,8 @@ class DependencyCreate(BaseModel):
     to_type: str
     to_id: str
     dependency_kind: str = "depends_on"
+    from_environment_id: Optional[str] = None
+    to_environment_id: Optional[str] = None
 
 
 class DependencyOut(ORMModel):

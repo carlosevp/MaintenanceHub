@@ -342,4 +342,253 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+
+  // ----- M15 Administration -----
+  adminOverview: () => request<Record<string, unknown>>("/api/v1/admin/overview"),
+  adminSecretsStatus: () => request<Record<string, unknown>>("/api/v1/admin/secrets-status"),
+  adminUsers: (q?: string) =>
+    request<
+      Array<{
+        id: string;
+        email: string;
+        display_name: string;
+        is_active: boolean;
+        roles: string[];
+      }>
+    >(`/api/v1/admin/users${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  adminGrants: (params?: URLSearchParams) =>
+    request<
+      Array<{
+        id: string;
+        user_id?: string | null;
+        directory_group?: string | null;
+        application_id: string;
+        role: string;
+      }>
+    >(`/api/v1/admin/grants${params ? `?${params}` : ""}`),
+  adminCreateGrant: (body: { user_id: string; application_id: string; role: string }) =>
+    request<{ id: string }>("/api/v1/admin/grants", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminDeleteGrant: (id: string) =>
+    request<void>(`/api/v1/admin/grants/${id}`, { method: "DELETE" }),
+  adminDependencies: (q?: string) =>
+    request<
+      Array<{
+        id: string;
+        from_type: string;
+        from_id: string;
+        to_type: string;
+        to_id: string;
+        from_environment_id?: string | null;
+        to_environment_id?: string | null;
+        dependency_kind: string;
+        origin: string;
+        updated_at?: string | null;
+        description: string;
+      }>
+    >(`/api/v1/admin/dependencies${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  adminCreateDependency: (body: unknown) =>
+    request<Record<string, unknown>>("/api/v1/admin/dependencies", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminDeleteDependency: (id: string) =>
+    request<void>(`/api/v1/admin/dependencies/${id}`, { method: "DELETE" }),
+  adminCreateInfra: (body: unknown) =>
+    request<InfraComponent>("/api/v1/admin/infra-components", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminDeliveries: (params?: URLSearchParams) =>
+    request<
+      Array<{
+        id: string;
+        idempotency_key: string;
+        channel: string;
+        destination_type: string;
+        destination: string;
+        subject?: string | null;
+        status: string;
+        event_id?: string | null;
+        attempt_count: number;
+        last_error?: string | null;
+        created_at?: string | null;
+      }>
+    >(`/api/v1/admin/deliveries${params ? `?${params}` : ""}`),
+  adminJobs: (params?: URLSearchParams) =>
+    request<
+      Array<{
+        id: string;
+        job_type: string;
+        status: string;
+        attempt_count: number;
+        last_error?: string | null;
+        leased_by?: string | null;
+        idempotency_key?: string | null;
+        run_at?: string | null;
+        created_at?: string | null;
+      }>
+    >(`/api/v1/admin/jobs${params ? `?${params}` : ""}`),
+  adminRetryJob: (id: string) =>
+    request<Record<string, unknown>>(`/api/v1/admin/jobs/${id}/retry`, { method: "POST" }),
+  adminAudit: (params?: URLSearchParams) =>
+    request<
+      Array<{
+        id: string;
+        actor_id?: string | null;
+        action: string;
+        entity_type: string;
+        entity_id?: string | null;
+        summary: Record<string, unknown>;
+        at?: string | null;
+      }>
+    >(`/api/v1/admin/audit${params ? `?${params}` : ""}`),
+  adminIntegrations: () =>
+    request<Record<string, unknown>>("/api/v1/admin/settings/integrations"),
+  adminTestIntegration: (kind: string) =>
+    request<Record<string, unknown>>(
+      `/api/v1/admin/settings/integrations/test?kind=${encodeURIComponent(kind)}`,
+      { method: "POST" },
+    ),
+  adminSnPoll: (body: { dry_run?: boolean; fixture_records?: unknown[] }) =>
+    request<Record<string, unknown>>("/api/v1/admin/servicenow/poll-now", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminSnUnmatched: (status = "open") =>
+    request<
+      Array<{
+        id: string;
+        external_id: string;
+        reason: string;
+        status: string;
+        raw_payload?: unknown;
+        resolved_event_id?: string | null;
+      }>
+    >(`/api/v1/admin/servicenow/unmatched?status=${encodeURIComponent(status)}`),
+  adminSnResolve: (id: string, body: { action: string; event_id?: string }) =>
+    request<Record<string, unknown>>(`/api/v1/admin/servicenow/unmatched/${id}/resolve`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminImports: () =>
+    request<
+      Array<{
+        id: string;
+        kind: string;
+        filename: string;
+        status: string;
+        created_at?: string | null;
+        committed_at?: string | null;
+        result_summary?: Record<string, unknown> | null;
+      }>
+    >("/api/v1/admin/imports"),
+  adminUploadCsv: async (file: File, kind: string, overwriteManual = false) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("kind", kind);
+    fd.append("overwrite_manual_dependencies", overwriteManual ? "true" : "false");
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    const res = await fetch("/api/v1/admin/imports/csv", { method: "POST", headers, body: fd });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        detail = body.detail || detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    return res.json() as Promise<{ id: string; status: string; kind: string; filename: string }>;
+  },
+  adminPreviewImport: (id: string) =>
+    request<Record<string, unknown>>(`/api/v1/admin/imports/${id}/preview`, { method: "POST" }),
+  adminCommitImport: (id: string) =>
+    request<Record<string, unknown>>(`/api/v1/admin/imports/${id}/commit`, { method: "POST" }),
+  adminRoleMappings: () =>
+    request<
+      Array<{
+        id: string;
+        directory_group: string;
+        role: string;
+        application_id?: string | null;
+      }>
+    >("/api/v1/admin/role-mappings"),
+  adminCreateRoleMapping: (body: {
+    directory_group: string;
+    role: string;
+    application_id?: string | null;
+  }) =>
+    request<Record<string, unknown>>("/api/v1/admin/role-mappings", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  adminDeleteRoleMapping: (id: string) =>
+    request<void>(`/api/v1/admin/role-mappings/${id}`, { method: "DELETE" }),
+  adminServiceCredentials: () =>
+    request<
+      Array<{
+        id: string;
+        name: string;
+        client_id: string;
+        scopes: string[];
+        application_id?: string | null;
+        revoked_at?: string | null;
+      }>
+    >("/api/v1/admin/service-credentials"),
+  adminCreateServiceCred: (body: { name: string; scopes?: string[]; application_id?: string }) =>
+    request<{ id: string; client_id: string; client_secret: string }>(
+      "/api/v1/admin/service-credentials",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  adminRotateServiceCred: (id: string) =>
+    request<{ client_id: string; client_secret: string }>(
+      `/api/v1/admin/service-credentials/${id}/rotate`,
+      { method: "POST" },
+    ),
+  adminRevokeServiceCred: (id: string) =>
+    request<Record<string, unknown>>(`/api/v1/admin/service-credentials/${id}/revoke`, {
+      method: "POST",
+    }),
+  notificationTemplates: () =>
+    request<
+      Array<{
+        id: string;
+        key: string;
+        channel: string;
+        subject_template: string;
+        body_template: string;
+      }>
+    >("/api/v1/notification-templates"),
+  patchNotificationTemplate: (
+    key: string,
+    body: { subject_template?: string; body_template?: string },
+  ) =>
+    request<Record<string, unknown>>(`/api/v1/notification-templates/${key}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  testNotification: (body: unknown) =>
+    request<{
+      delivery_id: string;
+      status: string;
+      channel: string;
+      subject?: string | null;
+      preview: { subject: string; body: string };
+      note?: string;
+    }>("/api/v1/notifications/test", { method: "POST", body: JSON.stringify(body) }),
+  supportGroups: () =>
+    request<Array<{ id: string; key: string; name: string; directory_group?: string | null }>>(
+      "/api/v1/support-groups",
+    ),
+  createSupportGroup: (body: unknown) =>
+    request<Record<string, unknown>>("/api/v1/support-groups", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };

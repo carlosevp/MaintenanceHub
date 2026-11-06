@@ -2,7 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "@/features/auth/AuthContext";
 import clsx from "clsx";
 
-const links = [
+const baseLinks = [
   { to: "/", label: "Dashboard" },
   { to: "/calendar", label: "Calendar" },
   { to: "/catalog", label: "Catalog" },
@@ -14,6 +14,10 @@ const links = [
 
 export function Layout() {
   const { user, logout } = useAuth();
+  const isAdmin = user?.roles.includes("platform_administrator");
+  const links = isAdmin
+    ? [...baseLinks.slice(0, -1), { to: "/admin", label: "Admin" }, baseLinks[baseLinks.length - 1]]
+    : baseLinks;
 
   return (
     <div className="min-h-screen">

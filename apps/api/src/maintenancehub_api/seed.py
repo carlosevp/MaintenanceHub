@@ -19,6 +19,7 @@ from maintenancehub_api.models import (
     Environment,
     ExternalCiLink,
     Favorite,
+    GroupRoleMapping,
     InfraComponent,
     ReminderOffset,
     Role,
@@ -550,6 +551,34 @@ def seed_demo(db: Session) -> None:
     )
 
     _seed_m14_oracle_impact_demo(db, apps=apps, envs=envs, publisher=publisher)
+    _seed_m15_admin_demo(db)
+
+
+def _seed_m15_admin_demo(db: Session) -> None:
+    """Directory group maps + callouts for the Administration workspace demos."""
+    for directory_group, role in (
+        ("mh-viewers", RoleName.viewer),
+        ("mh-publishers", RoleName.publisher),
+        ("mh-admins", RoleName.platform_administrator),
+    ):
+        existing = (
+            db.query(GroupRoleMapping)
+            .filter(
+                GroupRoleMapping.directory_group == directory_group,
+                GroupRoleMapping.role == role,
+                GroupRoleMapping.application_id.is_(None),
+            )
+            .first()
+        )
+        if not existing:
+            db.add(
+                GroupRoleMapping(
+                    directory_group=directory_group,
+                    role=role,
+                    application_id=None,
+                )
+            )
+    db.commit()
 
 
 def _seed_m14_oracle_impact_demo(

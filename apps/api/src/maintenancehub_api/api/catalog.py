@@ -281,6 +281,26 @@ def create_dependency(
 ) -> Dependency:
     if not db.get(Application, app_id):
         raise HTTPException(status_code=404, detail="Application not found")
+    if body.to_type == "application" and body.to_id == app_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Self-reference rejected: Consumer cannot depend on itself",
+        )
+    existing = (
+        db.query(Dependency)
+        .filter(
+            Dependency.from_type == "application",
+            Dependency.from_id == app_id,
+            Dependency.to_type == body.to_type,
+            Dependency.to_id == body.to_id,
+            Dependency.dependency_kind == body.dependency_kind,
+            Dependency.from_environment_id == body.from_environment_id,
+            Dependency.to_environment_id == body.to_environment_id,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Duplicate dependency relationship")
     dep = Dependency(
         from_type="application",
         from_id=app_id,
@@ -288,6 +308,8 @@ def create_dependency(
         to_id=body.to_id,
         dependency_kind=body.dependency_kind,
         origin="manual",
+        from_environment_id=body.from_environment_id,
+        to_environment_id=body.to_environment_id,
     )
     db.add(dep)
     db.commit()

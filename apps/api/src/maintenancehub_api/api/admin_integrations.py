@@ -371,6 +371,33 @@ def create_role_mapping(
     }
 
 
+@router.delete("/admin/role-mappings/{mapping_id}", status_code=204)
+def delete_role_mapping(
+    mapping_id: str,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
+) -> None:
+    row = db.get(GroupRoleMapping, mapping_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Role mapping not found")
+    summary = {
+        "directory_group": row.directory_group,
+        "role": row.role.value,
+        "application_id": row.application_id,
+    }
+    db.delete(row)
+    write_audit(
+        db,
+        actor_id=user.id,
+        action="role_mapping.delete",
+        entity_type="group_role_mapping",
+        entity_id=mapping_id,
+        summary=summary,
+        commit=False,
+    )
+    db.commit()
+
+
 # ----- Service credentials -----
 
 
@@ -457,15 +484,63 @@ def rotate_service_cred(
     return {"id": row.id, "client_id": row.client_id, "client_secret": raw_secret}
 
 
+@router.post("/admin/service-credentials/{cred_id}/revoke", status_code=200)
+def revoke_service_cred(
+    cred_id: str,
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
+) -> dict[str, Any]:
+    row = db.get(ServiceCredential, cred_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Credential not found")
+    if row.revoked_at:
+        return {
+            "id": row.id,
+            "client_id": row.client_id,
+            "revoked_at": row.revoked_at.isoformat(),
+            "already_revoked": True,
+        }
+    row.revoked_at = datetime.now(timezone.utc)
+    write_audit(
+        db,
+        actor_id=user.id,
+        action="service_credential.revoke",
+        entity_type="service_credential",
+        entity_id=row.id,
+        summary={"client_id": row.client_id},
+        commit=False,
+    )
+    db.commit()
+    db.refresh(row)
+    return {
+        "id": row.id,
+        "client_id": row.client_id,
+        "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
+        "already_revoked": False,
+    }
+
+
 @router.get("/admin/audit")
 def list_audit(
     limit: int = Query(50, ge=1, le=200),
+    q: str | None = None,
+    action: str | None = None,
+    entity_type: str | None = None,
+    actor_id: str | None = None,
     db: Session = Depends(get_db),
     _: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
 ) -> list[dict[str, Any]]:
-    rows = db.query(AuditLog).order_by(AuditLog.at.desc()).limit(limit).all()
-    return [
-        {
+    query = db.query(AuditLog)
+    if action:
+        query = query.filter(AuditLog.action.ilike(f"%{action}%"))
+    if entity_type:
+        query = query.filter(AuditLog.entity_type == entity_type)
+    if actor_id:
+        query = query.filter(AuditLog.actor_id == actor_id)
+    rows = query.order_by(AuditLog.at.desc()).limit(limit).all()
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        item = {
             "id": r.id,
             "actor_id": r.actor_id,
             "action": r.action,
@@ -474,8 +549,12 @@ def list_audit(
             "summary": r.summary,
             "at": r.at.isoformat() if r.at else None,
         }
-        for r in rows
-    ]
+        if q:
+            blob = f"{r.action}:{r.entity_type}:{r.entity_id}:{r.summary}"
+            if q.lower() not in blob.lower():
+                continue
+        out.append(item)
+    return out
 
 
 # Banner API moved to api/banner.py (M12)
