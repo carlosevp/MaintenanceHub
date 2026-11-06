@@ -47,8 +47,62 @@ PUBLIC_KEYS = frozenset(
         "revision",
         "dismissible",
         "occurrence_starts_at",
+        "status_path",
     }
 )
+
+# Deterministic priority: active outage first, then executing, then upcoming.
+PRESENTATION_RANK = {
+    PRES_OUTAGE: 0,
+    PRES_EXTENDED: 1,
+    PRES_IN_PROGRESS: 2,
+    PRES_VERIFYING: 3,
+    PRES_UPCOMING: 4,
+}
+
+
+def logical_key(message: dict[str, Any]) -> str:
+    """Identity for dedupe — event + occurrence slot, never title alone."""
+    event_id = str(message.get("event_id") or message.get("id") or "")
+    occ = message.get("occurrence_starts_at")
+    if occ:
+        return f"{event_id}|{occ}"
+    return f"{event_id}|{message.get('id') or ''}"
+
+
+def dedupe_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep one row per logical occurrence; prefer higher-priority presentation."""
+    best: dict[str, dict[str, Any]] = {}
+    for msg in messages:
+        key = logical_key(msg)
+        prev = best.get(key)
+        if prev is None:
+            best[key] = msg
+            continue
+        prev_rank = PRESENTATION_RANK.get(str(prev.get("presentation")), 9)
+        next_rank = PRESENTATION_RANK.get(str(msg.get("presentation")), 9)
+        if next_rank < prev_rank:
+            best[key] = msg
+        elif next_rank == prev_rank:
+            # Deterministic tie-break: earlier start, then stable id
+            if (msg.get("starts_at") or "", msg.get("id") or "") < (
+                prev.get("starts_at") or "",
+                prev.get("id") or "",
+            ):
+                best[key] = msg
+    return list(best.values())
+
+
+def sort_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deterministic multi-notice order for compact primary selection."""
+    return sorted(
+        messages,
+        key=lambda m: (
+            PRESENTATION_RANK.get(str(m.get("presentation")), 9),
+            m.get("starts_at") or "",
+            m.get("id") or "",
+        ),
+    )
 
 
 def _now() -> datetime:
@@ -144,6 +198,9 @@ def _message_dict(
         event, now=now, starts_at=starts_at, ends_at=ends_at, status=status
     )
     dismissible = presentation == PRES_UPCOMING
+    # API timestamps are always UTC ISO-8601 with Z (Intl formats in the UI).
+    starts_full = ensure_utc(starts_at).isoformat().replace("+00:00", "Z")
+    ends_full = ensure_utc(ends_at).isoformat().replace("+00:00", "Z")
     return {
         "id": msg_id,
         "event_id": event.id,
@@ -151,8 +208,8 @@ def _message_dict(
         "title": event.title,
         "status": status.value if hasattr(status, "value") else str(status),
         "presentation": presentation,
-        "starts_at": ensure_utc(starts_at).isoformat().replace("+00:00", "Z"),
-        "ends_at": ensure_utc(ends_at).isoformat().replace("+00:00", "Z"),
+        "starts_at": starts_full,
+        "ends_at": ends_full,
         "expected_impact": event.expected_impact,
         "approval_state": (
             event.approval_state.value
@@ -166,6 +223,8 @@ def _message_dict(
             if occurrence_starts_at is not None and is_occurrence
             else None
         ),
+        # Relative path — hosts prefix with corporate MH HTTPS base.
+        "status_path": f"/status/events/{event.id}",
     }
 
 
@@ -288,13 +347,6 @@ def list_banner_messages(
                 )
             )
 
-    # Prefer active / outage first, then soonest start
-    rank = {
-        PRES_OUTAGE: 0,
-        PRES_EXTENDED: 1,
-        PRES_IN_PROGRESS: 2,
-        PRES_VERIFYING: 3,
-        PRES_UPCOMING: 4,
-    }
-    out.sort(key=lambda m: (rank.get(m["presentation"], 9), m["starts_at"]))
-    return out[:limit]
+    # Multi-notice policy: dedupe logical occurrences, then deterministic order.
+    # Compact UIs show index 0 as primary; remaining are "additional".
+    return sort_messages(dedupe_messages(out))[:limit]

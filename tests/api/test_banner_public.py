@@ -107,7 +107,10 @@ def test_banner_public_dto_excludes_internal_fields(client):
         "revision",
         "dismissible",
         "occurrence_starts_at",
+        "status_path",
     }
+    assert msg.get("status_path", "").startswith("/status/events/")
+    assert msg["starts_at"].endswith("Z") or "+00:00" in msg["starts_at"]
     raw = res.text
     assert "INTERNAL NOTE" not in raw
     assert "timeline" not in raw

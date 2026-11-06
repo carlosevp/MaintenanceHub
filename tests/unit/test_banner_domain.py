@@ -8,8 +8,11 @@ from types import SimpleNamespace
 from maintenancehub_api.domain.banner import (
     PRES_OUTAGE,
     PRES_UPCOMING,
+    dedupe_messages,
     impact_matches_app_env,
+    logical_key,
     presentation_for,
+    sort_messages,
 )
 from maintenancehub_api.domain.impacts import ImpactRef
 from maintenancehub_api.models import ApprovalState, EventKind, EventStatus
@@ -56,3 +59,38 @@ def test_presentation_outage_when_confirmed_manual_executing():
         status=EventStatus.in_progress,
     )
     assert label == PRES_OUTAGE
+
+
+def test_dedupe_by_logical_occurrence_not_title():
+    msgs = [
+        {
+            "id": "a",
+            "event_id": "e1",
+            "title": "Same",
+            "presentation": "upcoming",
+            "starts_at": "2026-11-10T02:00:00Z",
+            "occurrence_starts_at": "2026-11-10T02:00:00Z",
+        },
+        {
+            "id": "a2",
+            "event_id": "e1",
+            "title": "Same",
+            "presentation": "in_progress",
+            "starts_at": "2026-11-10T02:00:00Z",
+            "occurrence_starts_at": "2026-11-10T02:00:00Z",
+        },
+        {
+            "id": "b",
+            "event_id": "e1",
+            "title": "Same",
+            "presentation": "upcoming",
+            "starts_at": "2026-11-17T02:00:00Z",
+            "occurrence_starts_at": "2026-11-17T02:00:00Z",
+        },
+    ]
+    assert logical_key(msgs[0]) == logical_key(msgs[1])
+    assert logical_key(msgs[0]) != logical_key(msgs[2])
+    out = sort_messages(dedupe_messages(msgs))
+    assert len(out) == 2
+    assert out[0]["presentation"] == "in_progress"
+    assert out[1]["id"] == "b"

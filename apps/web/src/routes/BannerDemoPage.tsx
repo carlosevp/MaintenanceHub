@@ -4,11 +4,12 @@ import { api, type Application } from "@/api/client";
 
 /**
  * Embed banner screen — select app/env, copy dependency-free snippet, L/D preview.
- * Uses the same public DTO as @maintenancehub/banner (no internal notes).
+ * Compact primary + additional; warns on non-HTTPS / local / in-cluster bases.
  */
 
 type Msg = {
   id: string;
+  event_id?: string;
   kind: string;
   title: string;
   status: string;
@@ -19,9 +20,11 @@ type Msg = {
   approval_state: string;
   revision?: string;
   dismissible?: boolean;
+  status_path?: string | null;
 };
 
 type Theme = "light" | "dark";
+type RouteKind = "browser" | "corporate" | "in_cluster" | "local_dev";
 
 function presentationLabel(p?: string, status?: string): string {
   switch (p) {
@@ -40,29 +43,92 @@ function presentationLabel(p?: string, status?: string): string {
   }
 }
 
+function formatWindow(start: string, end: string, timeZone?: string): string {
+  try {
+    const opts: Intl.DateTimeFormatOptions = {
+      dateStyle: "medium",
+      timeStyle: "short",
+      ...(timeZone ? { timeZone } : {}),
+    };
+    const fmt = new Intl.DateTimeFormat(undefined, opts);
+    return `${fmt.format(new Date(start))} → ${fmt.format(new Date(end))}`;
+  } catch {
+    return `${start} → ${end}`;
+  }
+}
+
+function classifyBase(url: string): { kind: RouteKind; warn?: string; https: boolean } {
+  try {
+    const u = new URL(url);
+    const host = u.hostname;
+    const https = u.protocol === "https:";
+    const local =
+      host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0" || host.endsWith(".local");
+    if (local) {
+      return {
+        kind: "local_dev",
+        https,
+        warn: "Local/dev API base — do not ship this snippet to production hosts. Prefer HTTPS corporate URL for browsers.",
+      };
+    }
+    if (
+      host.endsWith(".svc") ||
+      host.endsWith(".svc.cluster.local") ||
+      host === "maintenancehub-api"
+    ) {
+      return {
+        kind: "in_cluster",
+        https,
+        warn: "In-cluster DNS is for BFFs/OpenShift — browsers need the HTTPS corporate route.",
+      };
+    }
+    if (!https) {
+      return {
+        kind: "corporate",
+        https: false,
+        warn: "Browser embeds should use an https:// MaintenanceHub base.",
+      };
+    }
+    return { kind: "browser", https: true };
+  } catch {
+    return { kind: "local_dev", https: false, warn: "Invalid API base URL." };
+  }
+}
+
 function buildSnippet(opts: {
   apiBase: string;
   appKey: string;
   envKey: string;
   theme: Theme;
   advanceHours: number;
+  timeZone: string;
+  routeKind: RouteKind;
+  warn?: string;
 }): string {
+  const base = opts.apiBase.replace(/\/$/, "");
   const envLine = opts.envKey
     ? `\n      environmentKey: ${JSON.stringify(opts.envKey)},`
     : "";
-  return `<!-- MaintenanceHub banner — Claims INT / host app embed. No secrets. -->
-<link rel="stylesheet" href="${opts.apiBase}/static/banner/style.css" />
+  const warnComment = opts.warn ? `\n<!-- WARNING: ${opts.warn} -->` : "";
+  const tzLine = opts.timeZone
+    ? `\n      timeZone: ${JSON.stringify(opts.timeZone)},`
+    : "";
+  return `<!-- MaintenanceHub banner — confirmed notices only; no secrets.${warnComment} -->
+<!-- route: ${opts.routeKind} | API ISO-8601; UI formats with Intl -->
+<link rel="stylesheet" href="${base}/static/banner/style.css" />
 <div id="mh-banner-root"></div>
-<script src="${opts.apiBase}/static/banner/embed.js" defer></script>
+<script src="${base}/static/banner/embed.js" defer></script>
 <script>
   document.addEventListener("DOMContentLoaded", function () {
     if (!window.MaintenanceHubBanner) return;
     window.MaintenanceHubBanner.mount({
       target: "#mh-banner-root",
-      apiBaseUrl: ${JSON.stringify(opts.apiBase)},
+      apiBaseUrl: ${JSON.stringify(base)},
       applicationKey: ${JSON.stringify(opts.appKey)},${envLine}
-      advanceHours: ${opts.advanceHours},
+      advanceHours: ${opts.advanceHours},${tzLine}
+      statusPageBaseUrl: ${JSON.stringify(base)},
       theme: ${JSON.stringify(opts.theme)},
+      compact: true,
       pollIntervalMs: 60000
     });
   });
@@ -75,13 +141,15 @@ export function BannerDemoPage() {
   const [envKey, setEnvKey] = useState("INT");
   const [advanceHours, setAdvanceHours] = useState(24);
   const [theme, setTheme] = useState<Theme>("light");
+  const [expanded, setExpanded] = useState(false);
+  const [timeZone, setTimeZone] = useState(
+    () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+  );
   const [messages, setMessages] = useState<Msg[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [raw, setRaw] = useState("");
   const [copied, setCopied] = useState(false);
-  const [apiBase, setApiBase] = useState(
-    () => (typeof window !== "undefined" ? window.location.origin : "http://localhost:8000"),
-  );
+  const [apiBase, setApiBase] = useState("https://maintenancehub.example.com");
 
   useEffect(() => {
     void api.applications().then(setApps).catch(() => setApps([]));
@@ -89,7 +157,6 @@ export function BannerDemoPage() {
 
   useEffect(() => {
     void load();
-    // Initial preview for Claims INT / selected pair
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -108,6 +175,8 @@ export function BannerDemoPage() {
       .filter((e) => e.key);
   }, [selectedApp]);
 
+  const classified = useMemo(() => classifyBase(apiBase), [apiBase]);
+
   const snippet = useMemo(
     () =>
       buildSnippet({
@@ -116,9 +185,16 @@ export function BannerDemoPage() {
         envKey,
         theme,
         advanceHours,
+        timeZone,
+        routeKind: classified.kind,
+        warn: classified.warn,
       }),
-    [apiBase, appKey, envKey, theme, advanceHours],
+    [apiBase, appKey, envKey, theme, advanceHours, timeZone, classified],
   );
+
+  const primary = messages[0];
+  const additional = messages.slice(1);
+  const visible = !expanded && additional.length > 0 ? (primary ? [primary] : []) : messages;
 
   async function load(e?: FormEvent) {
     e?.preventDefault();
@@ -134,7 +210,7 @@ export function BannerDemoPage() {
       setRaw(JSON.stringify(data, null, 2));
       const blob = JSON.stringify(data);
       if (
-        blob.includes("description") ||
+        blob.includes('"description"') ||
         blob.includes("timeline") ||
         blob.includes("client_secret")
       ) {
@@ -170,9 +246,10 @@ export function BannerDemoPage() {
           Banner embed
         </h1>
         <p className="max-w-2xl text-sm text-ink-600">
-          Select an application and environment, copy a dependency-free snippet, and preview
-          light/dark presentation. Confirmed notices only — never paste{" "}
-          <code className="text-ink">client_secret</code> into host pages. Not monitoring.
+          Select an application and environment, copy a dependency-free snippet for an{" "}
+          <strong className="font-medium text-ink">independent host</strong>, and preview
+          compact light/dark presentation. Confirmed notices only — never paste{" "}
+          <code className="text-ink">client_secret</code>. Not monitoring.
         </p>
       </header>
 
@@ -183,14 +260,24 @@ export function BannerDemoPage() {
         <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => void load(e)}>
           <div className="sm:col-span-2">
             <label className="mh-label" htmlFor="api-base">
-              API base URL
+              Browser / corporate API base (HTTPS)
             </label>
             <input
               id="api-base"
               className="mh-input"
               value={apiBase}
               onChange={(e) => setApiBase(e.target.value)}
+              placeholder="https://maintenancehub.example.com"
             />
+            <p className="mt-1 text-xs text-ink-faint">
+              Route: <code>{classified.kind}</code>
+              {classified.https ? " · HTTPS" : " · not HTTPS"}
+            </p>
+            {classified.warn && (
+              <p className="mt-2 rounded-md border border-amber-300/60 bg-amber-50 px-3 py-2 text-xs text-amber-900" role="status">
+                {classified.warn}
+              </p>
+            )}
           </div>
           <div>
             <label className="mh-label" htmlFor="app-key">
@@ -266,6 +353,18 @@ export function BannerDemoPage() {
             />
           </div>
           <div>
+            <label className="mh-label" htmlFor="tz">
+              Viewer timezone (IANA)
+            </label>
+            <input
+              id="tz"
+              className="mh-input"
+              value={timeZone}
+              onChange={(e) => setTimeZone(e.target.value)}
+              placeholder="America/Chicago"
+            />
+          </div>
+          <div>
             <label className="mh-label">Preview theme</label>
             <div className="mt-1 flex gap-2">
               {(["light", "dark"] as Theme[]).map((t) => (
@@ -301,7 +400,7 @@ export function BannerDemoPage() {
 
       <section className="space-y-3" aria-labelledby="embed-preview">
         <h2 id="embed-preview" className="font-display text-xl font-semibold text-ink">
-          Live preview
+          Live preview (compact)
         </h2>
         <aside
           className={
@@ -323,14 +422,14 @@ export function BannerDemoPage() {
             MaintenanceHub notices · {appKey}
             {envKey ? ` / ${envKey}` : ""}
           </p>
-          {messages.length === 0 ? (
+          {visible.length === 0 ? (
             <p className={theme === "dark" ? "mt-2 text-sm text-slate-400" : "mt-2 text-sm text-ink-500"}>
               No active/upcoming confirmed messages in the advance window.
             </p>
           ) : (
             <ul className="mt-3 space-y-2">
-              {messages.map((m) => {
-                const outage = m.presentation === "outage" || m.kind === "manual_outage";
+              {visible.map((m) => {
+                const outage = m.presentation === "outage";
                 return (
                   <li
                     key={m.id}
@@ -350,11 +449,18 @@ export function BannerDemoPage() {
                     </span>
                     <strong className="block">{m.title}</strong>
                     <span className="text-xs text-ink-600">
-                      {m.starts_at} → {m.ends_at}
+                      {formatWindow(m.starts_at, m.ends_at, timeZone)}
                     </span>
                     {m.expected_impact && (
                       <span className="block text-xs text-ink-600">
                         Impact: {m.expected_impact}
+                      </span>
+                    )}
+                    {m.status_path && (
+                      <span className="mt-1 block text-xs">
+                        <a className="text-accent underline" href={m.status_path}>
+                          Status
+                        </a>
                       </span>
                     )}
                   </li>
@@ -362,13 +468,22 @@ export function BannerDemoPage() {
               })}
             </ul>
           )}
+          {additional.length > 0 && (
+            <button
+              type="button"
+              className="mt-3 text-xs font-semibold text-teal-800 underline"
+              onClick={() => setExpanded((v) => !v)}
+            >
+              {expanded ? "Show less" : `View ${additional.length} additional`}
+            </button>
+          )}
         </aside>
       </section>
 
       <section className="space-y-3" aria-labelledby="embed-snippet">
         <div className="flex items-center justify-between gap-2">
           <h2 id="embed-snippet" className="font-display text-xl font-semibold text-ink">
-            Copy-paste snippet
+            Copy-paste snippet (independent host)
           </h2>
           <button className="mh-btn-ghost" type="button" onClick={() => void copySnippet()}>
             {copied ? "Copied" : "Copy"}
@@ -377,19 +492,29 @@ export function BannerDemoPage() {
         <pre className="mh-panel overflow-x-auto p-4 text-xs leading-relaxed text-ink-700">
           {snippet}
         </pre>
-        <p className="text-xs text-ink-faint">
-          Internal OpenShift path:{" "}
-          <code>
-            {apiBase.replace(/\/$/, "")}/api/v1/internal/banner?application_key={appKey}
-            {envKey ? `&environment_key=${envKey}` : ""}
-          </code>
-        </p>
+        <div className="space-y-1 text-xs text-ink-faint">
+          <p>
+            <strong className="text-ink-600">Browser / corporate:</strong>{" "}
+            <code>https://&lt;mh&gt;/api/v1/public/banner?…</code>
+          </p>
+          <p>
+            <strong className="text-ink-600">In-cluster (OpenShift BFF):</strong>{" "}
+            <code>
+              http://maintenancehub-api:8000/api/v1/internal/banner?application_key={appKey}
+              {envKey ? `&environment_key=${envKey}` : ""}
+            </code>
+          </p>
+          <p>
+            <strong className="text-ink-600">Local demo:</strong>{" "}
+            <code>http://127.0.0.1:8000</code> — never ship.
+          </p>
+        </div>
       </section>
 
       {raw && (
         <section className="space-y-2" aria-labelledby="embed-json">
           <h2 id="embed-json" className="font-display text-lg font-semibold text-ink">
-            Public JSON
+            Public JSON (ISO times)
           </h2>
           <pre className="mh-panel overflow-x-auto p-4 text-xs text-ink-700">{raw}</pre>
         </section>

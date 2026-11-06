@@ -57,11 +57,13 @@
         var params = new URLSearchParams(location.search);
         window.MaintenanceHubBanner.mount({
           target: "#mh-banner-root",
-          apiBaseUrl: params.get("api") || "http://localhost:8000",
+          apiBaseUrl: params.get("api") || "http://127.0.0.1:8000",
           applicationKey: "claims",
           environmentKey: "INT",
           advanceHours: Number(params.get("advance") || 24),
+          timeZone: params.get("tz") || Intl.DateTimeFormat().resolvedOptions().timeZone,
           theme: params.get("theme") || "light",
+          compact: true,
           pollIntervalMs: 60000,
         });
       });

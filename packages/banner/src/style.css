@@ -1,34 +1,51 @@
-/* @maintenancehub/banner — premium light/dark (M18). No Google Fonts. */
+/*
+ * @maintenancehub/banner — scoped, host-safe styles (M18 harden).
+ * All rules are prefixed with .mh-banner* so host pages are not restyled.
+ * No Google Fonts; inherits host font stack with a system fallback.
+ */
 
-.mh-banner {
+.mh-banner,
+.mh-banner--error {
   --mh-ink: #1a2332;
   --mh-muted: #4b5c6b;
   --mh-faint: #6b7c8c;
   --mh-accent: #0f766e;
-  --mh-accent-soft: #e8f1f0;
+  --mh-accent-soft: #eef5f4;
   --mh-surface: #f7fbfa;
   --mh-surface-2: #ffffff;
-  --mh-border: #9bbbb6;
-  --mh-item-border: #d5e4e1;
+  --mh-border: #b7ccc8;
+  --mh-item-border: #d8e4e1;
   --mh-outage-bg: #fff8f8;
-  --mh-outage-border: #f0b4b4;
+  --mh-outage-border: #e8b4b4;
   --mh-outage-ink: #b91c1c;
   --mh-error-bg: #fef2f2;
   --mh-error-border: #f5c2c2;
   --mh-error-ink: #991b1b;
-  --mh-shadow: 0 1px 2px rgba(26, 35, 50, 0.06);
-
-  font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  box-sizing: border-box;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 14px;
   line-height: 1.45;
   color: var(--mh-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+.mh-banner *,
+.mh-banner *::before,
+.mh-banner *::after,
+.mh-banner--error *,
+.mh-banner--error *::before,
+.mh-banner--error *::after {
+  box-sizing: border-box;
+}
+
+.mh-banner {
   background: linear-gradient(165deg, var(--mh-surface) 0%, var(--mh-accent-soft) 100%);
   border: 1px solid var(--mh-border);
-  border-radius: 10px;
-  padding: 14px 16px;
+  border-radius: 8px;
+  padding: 12px 14px;
   margin: 0 0 12px;
-  box-shadow: var(--mh-shadow);
-  animation: mh-banner-in 280ms ease-out;
+  max-width: 100%;
+  animation: mh-banner-in 240ms ease-out;
 }
 
 .mh-banner[data-theme="dark"],
@@ -48,7 +65,6 @@
   --mh-error-bg: #2a1515;
   --mh-error-border: #7f1d1d;
   --mh-error-ink: #fecaca;
-  --mh-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -69,14 +85,13 @@
     --mh-error-bg: #2a1515;
     --mh-error-border: #7f1d1d;
     --mh-error-ink: #fecaca;
-    --mh-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   }
 }
 
 @keyframes mh-banner-in {
   from {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-3px);
   }
   to {
     opacity: 1;
@@ -85,21 +100,21 @@
 }
 
 .mh-banner--empty {
-  display: none;
+  display: none !important;
 }
 
 .mh-banner--error {
-  background: var(--mh-error-bg, #fef2f2);
-  border: 1px solid var(--mh-error-border, #f5c2c2);
-  color: var(--mh-error-ink, #991b1b);
+  background: var(--mh-error-bg);
+  border: 1px solid var(--mh-error-border);
+  color: var(--mh-error-ink);
   padding: 10px 12px;
   border-radius: 8px;
-  font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
+  margin: 0 0 12px;
 }
 
 .mh-banner__heading {
-  margin: 0 0 10px;
+  margin: 0 0 8px;
+  padding: 0;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -112,17 +127,16 @@
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .mh-banner__item {
   display: grid;
-  gap: 4px;
+  gap: 3px;
   padding: 10px 12px;
   background: var(--mh-surface-2);
   border: 1px solid var(--mh-item-border);
-  border-radius: 8px;
-  animation: mh-banner-in 320ms ease-out;
+  border-radius: 6px;
 }
 
 .mh-banner__item--outage {
@@ -163,7 +177,9 @@
   color: var(--mh-faint);
 }
 
-.mh-banner__dismiss {
+.mh-banner__status-link,
+.mh-banner__dismiss,
+.mh-banner__more {
   margin-left: auto;
   border: 0;
   background: transparent;
@@ -177,9 +193,22 @@
   padding: 0;
 }
 
+.mh-banner__status-link {
+  margin-left: 0;
+}
+
 .mh-banner__dismiss:hover,
-.mh-banner__dismiss:focus-visible {
+.mh-banner__dismiss:focus-visible,
+.mh-banner__more:hover,
+.mh-banner__more:focus-visible,
+.mh-banner__status-link:hover,
+.mh-banner__status-link:focus-visible {
   color: var(--mh-ink);
+}
+
+.mh-banner__more {
+  margin: 8px 0 0;
+  display: inline-block;
 }
 
 .mh-banner__title {
@@ -197,8 +226,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mh-banner,
-  .mh-banner__item {
+  .mh-banner {
     animation: none;
   }
 }
