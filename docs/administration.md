@@ -11,7 +11,7 @@ Authorization is enforced by the API (`platform_administrator`). Hiding nav is n
 | Overview | Catalog/job/delivery counts; redacted secrets/config status; OpenShift-only callouts |
 | Apps & Dependencies | Consumer→Provider editor (cross-env), infra create, dependency list/delete |
 | ServiceNow & CMDB | Status without secrets; connection test; dry-run / poll-now; unmatched resolve; CSV upload→preview→commit→history |
-| Notifications | SMTP/bridge status; template edit; test send with subject/body preview |
+| Notifications | SMTP/bridge status; **Template Manager** (CRUD/clone/activate/versions); PA `To:` routing docs; preview + test send (capture vs real). See [power-automate-templates.md](./power-automate-templates.md). |
 | Users & Permissions | Users; application grants; directory group→role maps; service credentials create/rotate/revoke |
 | Jobs & Delivery | Job filters; safe retry; delivery history filters |
 | Audit | Searchable immutable audit log |
@@ -25,7 +25,7 @@ Authorization is enforced by the API (`platform_administrator`). Hiding nav is n
 - Support groups / catalog objects already exposed by catalog APIs
 - CSV import preview/commit (`import_mode` recorded; absences never deleted)
 - SN dry-run / poll-now / unmatched resolve
-- Notification templates; test notifications
+- Notification templates (CRUD, clone, activate/deactivate/archive, restore, preview); test notifications (demo capture or real SMTP path)
 - Application grants; group role mappings
 - Service credentials (generate → one-time secret; rotate → new one-time secret; revoke; list/audit never expose secret)
 - Job retry (failed/dead only; `FOR UPDATE`; refuses sent / UNCERTAIN / mid-send deliveries)

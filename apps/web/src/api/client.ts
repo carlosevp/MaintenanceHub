@@ -579,22 +579,85 @@ export const api = {
     request<Record<string, unknown>>(`/api/v1/admin/service-credentials/${id}/revoke`, {
       method: "POST",
     }),
-  notificationTemplates: () =>
+  notificationTemplates: (includeArchived = false) =>
     request<
       Array<{
         id: string;
         key: string;
+        name?: string | null;
+        description?: string | null;
+        event_type?: string | null;
+        status: string;
         channel: string;
         subject_template: string;
         body_template: string;
+        body_plain_template?: string | null;
+        body_html_template?: string | null;
+        version: number;
+        is_system: boolean;
       }>
-    >("/api/v1/notification-templates"),
+    >(`/api/v1/notification-templates${includeArchived ? "?include_archived=true" : ""}`),
+  notificationTemplateCatalog: () =>
+    request<{
+      event_types: Array<{ key: string; label: string }>;
+      placeholders: Array<{ key: string; label: string; sample: string; note?: string }>;
+      pa_notes: Record<string, string>;
+    }>("/api/v1/notification-templates/catalog"),
+  createNotificationTemplate: (body: unknown) =>
+    request<Record<string, unknown>>("/api/v1/notification-templates", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   patchNotificationTemplate: (
     key: string,
-    body: { subject_template?: string; body_template?: string },
+    body: Record<string, unknown>,
   ) =>
     request<Record<string, unknown>>(`/api/v1/notification-templates/${key}`, {
       method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  cloneNotificationTemplate: (key: string, body: { new_key?: string; new_name?: string } = {}) =>
+    request<Record<string, unknown>>(`/api/v1/notification-templates/${key}/clone`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  activateNotificationTemplate: (key: string) =>
+    request<Record<string, unknown>>(`/api/v1/notification-templates/${key}/activate`, {
+      method: "POST",
+    }),
+  deactivateNotificationTemplate: (key: string) =>
+    request<Record<string, unknown>>(`/api/v1/notification-templates/${key}/deactivate`, {
+      method: "POST",
+    }),
+  archiveNotificationTemplate: (key: string) =>
+    request<Record<string, unknown>>(`/api/v1/notification-templates/${key}/archive`, {
+      method: "POST",
+    }),
+  notificationTemplateVersions: (key: string) =>
+    request<
+      Array<{
+        version: number;
+        change_note?: string | null;
+        changed_by?: string | null;
+        created_at?: string | null;
+        subject_template: string;
+        body_plain_template?: string | null;
+        status: string;
+      }>
+    >(`/api/v1/notification-templates/${key}/versions`),
+  restoreNotificationTemplate: (key: string, version: number) =>
+    request<Record<string, unknown>>(`/api/v1/notification-templates/${key}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
+  previewNotificationTemplate: (key: string, body: unknown = {}) =>
+    request<{
+      subject: string;
+      body_plain: string;
+      body_html: string;
+      pa_note?: string;
+    }>(`/api/v1/notification-templates/${key}/preview`, {
+      method: "POST",
       body: JSON.stringify(body),
     }),
   testNotification: (body: unknown) =>
@@ -603,7 +666,8 @@ export const api = {
       status: string;
       channel: string;
       subject?: string | null;
-      preview: { subject: string; body: string };
+      preview: { subject: string; body: string; body_plain?: string; body_html?: string };
+      rendered_payload?: Record<string, unknown>;
       note?: string;
     }>("/api/v1/notifications/test", { method: "POST", body: JSON.stringify(body) }),
   supportGroups: () =>

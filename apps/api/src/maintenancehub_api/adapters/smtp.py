@@ -33,7 +33,15 @@ class SendResult:
     uncertain: bool = False
 
 
-def _capture_notification(*, to: str, subject: str, body: str, msg_id: str, channel: str) -> None:
+def _capture_notification(
+    *,
+    to: str,
+    subject: str,
+    body: str,
+    msg_id: str,
+    channel: str,
+    body_html: str | None = None,
+) -> None:
     """Write a captured notification for local demos (no SMTP required)."""
     raw = os.environ.get("MH_NOTIFICATION_CAPTURE_DIR", "").strip()
     if not raw:
@@ -51,6 +59,7 @@ def _capture_notification(*, to: str, subject: str, body: str, msg_id: str, chan
                     "to": to,
                     "subject": subject,
                     "body": body,
+                    "body_html": body_html,
                     "captured_at": datetime.now(timezone.utc).isoformat(),
                 },
                 indent=2,
@@ -63,27 +72,48 @@ def _capture_notification(*, to: str, subject: str, body: str, msg_id: str, chan
 
 
 class SmtpAdapter:
-    def send(self, *, to: str, subject: str, body: str) -> SendResult:
+    def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        body_html: str | None = None,
+        force_capture: bool = False,
+    ) -> SendResult:
         settings = get_settings()
-        if not settings.smtp_enabled:
+        # Demo / capture-only path never opens an external SMTP connection.
+        if force_capture or not settings.smtp_enabled:
             msg_id = f"log-{uuid.uuid4().hex[:12]}"
             logger.info(
-                "[SMTP_DISABLED log sink] to=%s subject=%r body=%r id=%s",
+                "[%s] to=%s subject=%r body=%r id=%s",
+                "CAPTURE_ONLY" if force_capture else "SMTP_DISABLED log sink",
                 to,
                 subject,
                 body[:500],
                 msg_id,
             )
             _capture_notification(
-                to=to, subject=subject, body=body, msg_id=msg_id, channel="log"
+                to=to,
+                subject=subject,
+                body=body,
+                body_html=body_html,
+                msg_id=msg_id,
+                channel="capture" if force_capture else "log",
             )
-            return SendResult(ok=True, provider_message_id=msg_id, channel="log")
+            return SendResult(
+                ok=True,
+                provider_message_id=msg_id,
+                channel="capture" if force_capture else "log",
+            )
 
         message = EmailMessage()
         message["From"] = settings.smtp_from
         message["To"] = to
         message["Subject"] = subject
         message.set_content(body)
+        if body_html:
+            message.add_alternative(body_html, subtype="html")
 
         handed_off = False
         try:
@@ -99,7 +129,12 @@ class SmtpAdapter:
                 handed_off = True
             msg_id = message.get("Message-ID") or f"smtp-{uuid.uuid4().hex[:12]}"
             _capture_notification(
-                to=to, subject=subject, body=body, msg_id=str(msg_id), channel="smtp"
+                to=to,
+                subject=subject,
+                body=body,
+                body_html=body_html,
+                msg_id=str(msg_id),
+                channel="smtp",
             )
             return SendResult(ok=True, provider_message_id=msg_id, channel="smtp")
         except Exception as exc:  # noqa: BLE001

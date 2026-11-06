@@ -12,6 +12,12 @@ from sqlalchemy.orm import Session, joinedload
 from maintenancehub_api.adapters.bridge import get_bridge_adapter, render_bridge_subject
 from maintenancehub_api.adapters.smtp import get_smtp_adapter
 from maintenancehub_api.config import get_settings
+from maintenancehub_api.domain import template_manager as tmpl_mgr
+from maintenancehub_api.domain.pa_routing import (
+    assert_smtp_to_differs_from_route,
+    extract_rendered_routing,
+    is_pa_template,
+)
 from maintenancehub_api.domain.templates import (
     DEFAULT_TEMPLATES,
     approval_label,
@@ -39,26 +45,42 @@ def _now() -> datetime:
 
 
 def ensure_default_templates(db: Session) -> None:
-    for key, parts in DEFAULT_TEMPLATES.items():
-        existing = db.query(NotificationTemplate).filter(NotificationTemplate.key == key).first()
-        if not existing:
-            db.add(
-                NotificationTemplate(
-                    key=key,
-                    channel="smtp",
-                    subject_template=parts["subject"],
-                    body_template=parts["body"],
-                )
-            )
-    db.commit()
+    tmpl_mgr.ensure_default_templates(db)
 
 
 def get_template(db: Session, key: str) -> tuple[str, str]:
-    row = db.query(NotificationTemplate).filter(NotificationTemplate.key == key).first()
+    """Legacy helper — subject + plain body."""
+    rendered = render_template_parts(db, key)
+    return rendered["subject_template"], rendered["body_plain_template"]
+
+
+def render_template_parts(db: Session, key: str) -> dict[str, Any]:
+    """Resolve active template row (or defaults) into subject/plain/html sources + metadata."""
+    ensure_default_templates(db)
+    row = tmpl_mgr.resolve_active_template(db, key)
+    if not row:
+        row = db.query(NotificationTemplate).filter(NotificationTemplate.key == key).first()
     if row:
-        return row.subject_template, row.body_template
+        plain = row.body_plain_template if row.body_plain_template is not None else row.body_template
+        return {
+            "row": row,
+            "subject_template": row.subject_template,
+            "body_plain_template": plain or "",
+            "body_html_template": row.body_html_template or "",
+            "template_id": row.id,
+            "template_version": row.version,
+            "key": row.key,
+        }
     defaults = DEFAULT_TEMPLATES.get(key) or DEFAULT_TEMPLATES["event.transitioned"]
-    return defaults["subject"], defaults["body"]
+    return {
+        "row": None,
+        "subject_template": defaults["subject"],
+        "body_plain_template": defaults["body"],
+        "body_html_template": defaults.get("body_html") or "",
+        "template_id": None,
+        "template_version": None,
+        "key": key,
+    }
 
 
 def event_context(event: MaintenanceEvent, extra: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -84,6 +106,8 @@ def event_context(event: MaintenanceEvent, extra: dict[str, Any] | None = None) 
         "previous_ends_at": "",
         "note": "",
         "offset_label": "",
+        "teams_target_email": "",
+        "bridge_channel_key": "",
     }
     if extra:
         ctx.update(extra)
@@ -92,23 +116,24 @@ def event_context(event: MaintenanceEvent, extra: dict[str, Any] | None = None) 
 
 def refresh_default_templates(db: Session, *, force: bool = False) -> int:
     """Create missing templates; optionally overwrite bodies from DEFAULT_TEMPLATES (seed)."""
+    before = {r.key for r in db.query(NotificationTemplate).all()}
+    ensure_default_templates(db)
     n = 0
     for key, parts in DEFAULT_TEMPLATES.items():
         existing = db.query(NotificationTemplate).filter(NotificationTemplate.key == key).first()
         if not existing:
-            db.add(
-                NotificationTemplate(
-                    key=key,
-                    channel="smtp",
-                    subject_template=parts["subject"],
-                    body_template=parts["body"],
-                )
-            )
+            continue
+        if key not in before:
             n += 1
-        elif force:
+        if force:
             existing.subject_template = parts["subject"]
             existing.body_template = parts["body"]
-            n += 1
+            existing.body_plain_template = parts["body"]
+            existing.body_html_template = parts.get("body_html")
+            existing.name = parts.get("name") or existing.name
+            existing.event_type = key
+            if key in before:
+                n += 1
     db.commit()
     return n
 
@@ -200,10 +225,15 @@ def create_delivery_idempotent(
     body: str,
     event_id: str | None,
     subscription_id: str | None,
+    body_html: str | None = None,
+    body_plain: str | None = None,
+    template_id: str | None = None,
+    template_version: int | None = None,
+    rendered_payload: dict[str, Any] | None = None,
 ) -> tuple[NotificationDelivery | None, bool]:
     """Insert delivery; on unique violation treat as already applied (ADR-011).
 
-    Returns (delivery, created_new).
+    Persists the fully rendered payload before send (M19). Returns (delivery, created_new).
     """
     existing = (
         db.query(NotificationDelivery)
@@ -213,13 +243,29 @@ def create_delivery_idempotent(
     if existing:
         return existing, False
 
+    plain = body_plain if body_plain is not None else body
+    payload = rendered_payload or {
+        "subject": subject,
+        "body_plain": plain,
+        "body_html": body_html or "",
+        "channel": channel,
+        "destination": destination,
+        "destination_type": destination_type,
+        "template_id": template_id,
+        "template_version": template_version,
+    }
     delivery = NotificationDelivery(
         idempotency_key=idempotency_key,
         channel=channel,
         destination_type=destination_type,
         destination=destination,
         subject=subject,
-        body=body,
+        body=plain,
+        body_plain=plain,
+        body_html=body_html,
+        template_id=template_id,
+        template_version=template_version,
+        rendered_payload=payload,
         event_id=event_id,
         subscription_id=subscription_id,
         status=DeliveryStatus.pending,
@@ -239,6 +285,43 @@ def create_delivery_idempotent(
             .first()
         )
         return row, False
+
+
+def _is_pa_style_template(parts: dict[str, Any]) -> bool:
+    row = parts.get("row")
+    channel = getattr(row, "channel", None) if row is not None else None
+    return is_pa_template(
+        key=parts.get("key"),
+        channel=channel,
+        subject_template=parts.get("subject_template"),
+        body_plain=parts.get("body_plain_template"),
+    )
+
+
+# Outbox / lifecycle → template key (schedule, remind, extend, cancel, complete, …)
+LIFECYCLE_TEMPLATE_MAP: dict[str, str] = {
+    "event.created": "event.created",
+    "event.confirmed": "event.created",
+    "event.scheduled": "event.created",
+    "event.transitioned": "event.transitioned",
+    "event.extended": "event.extended",
+    "event.rescheduled": "event.rescheduled",
+    "event.cancelled": "event.transitioned",
+    "event.completed": "event.transitioned",
+    "event.reminder": "event.reminder",
+    "event.impacts_changed": "event.created",
+    "pa.teams_alert": "pa.teams_alert",
+}
+
+
+def resolve_lifecycle_template_key(event_type: str, *, to_status: str | None = None) -> str:
+    """Map outbox/lifecycle names to a deterministic DEFAULT / active template key."""
+    if to_status in {"cancelled", "completed"}:
+        return "event.transitioned"
+    key = LIFECYCLE_TEMPLATE_MAP.get(event_type, event_type)
+    if key not in DEFAULT_TEMPLATES and not key.startswith("pa."):
+        return "event.transitioned"
+    return key
 
 
 def enqueue_deliveries_for_event(
@@ -272,29 +355,76 @@ def enqueue_deliveries_for_event(
             if parsed:
                 record = occurrence_service.find_record(db, event.id, parsed[1])
 
-    subject_t, body_t = get_template(db, template_key)
-    ctx = event_context(event, extra_context)
-    subject = render_template(subject_t, ctx)
-    body = render_template(body_t, ctx)
+    parts = render_template_parts(db, template_key)
 
+    settings = get_settings()
     created = 0
     for sub in matching_subscriptions(db, event, record=record):
+        sub_extra = dict(extra_context or {})
         if sub.destination_type == "teams_bridge_channel":
             channel = "bridge"
+            # Envelope recipient is the bridge mailbox — never the Teams route.
+            dest = settings.bridge_mailbox or sub.destination
+            sub_extra.setdefault("bridge_channel_key", sub.bridge_channel_key or "default")
+            # Body `To: {{teams_target_email}}` is PA routing — not the SMTP envelope.
+            sub_extra.setdefault(
+                "teams_target_email",
+                sub_extra.get("teams_target_email")
+                or f"{sub.bridge_channel_key or 'ops'}@example.com",
+            )
+        else:
+            channel = "smtp"
             dest = sub.destination
+
+        ctx = event_context(event, sub_extra)
+        subject = render_template(parts["subject_template"], ctx, html_escape=False)
+        body_plain = render_template(parts["body_plain_template"], ctx, html_escape=False)
+        body_html = (
+            render_template(parts["body_html_template"], ctx, html_escape=True)
+            if parts["body_html_template"]
+            else None
+        )
+
+        routing = extract_rendered_routing(
+            body_plain=body_plain, body_html=body_html or ""
+        )
+        if channel == "bridge":
+            assert_smtp_to_differs_from_route(smtp_to=dest, routing_email=routing)
+
+        if sub.destination_type == "teams_bridge_channel" and not _is_pa_style_template(parts):
+            # Legacy subject-token routing for non-PA templates.
             subj = render_bridge_subject(
                 channel_key=sub.bridge_channel_key or "default",
                 title=event.title,
             )
         else:
-            channel = "smtp"
-            dest = sub.destination
             subj = subject
 
         # Per-occurrence lifecycle keys include orig_key so two occurrences of the
         # same series can each notify start/complete/extend/cancel independently.
         orig_key = (extra_context or {}).get("orig_key") or "master"
         key = f"event:{event.id}:{template_key}:{reason}:orig:{orig_key}:sub:{sub.id}"
+        # Pin template id/version + fully rendered bodies so retries never re-resolve.
+        payload = {
+            "subject": subj,
+            "body_plain": body_plain,
+            "body_html": body_html or "",
+            "teams_target_email": routing or ctx.get("teams_target_email") or "",
+            "bridge_channel_key": ctx.get("bridge_channel_key") or "",
+            "template_key": parts.get("key"),
+            "template_id": parts.get("template_id"),
+            "template_version": parts.get("template_version"),
+            "channel": channel,
+            "destination": dest,
+            "destination_type": sub.destination_type,
+            "smtp_to": dest,
+            "pa_routing_note": (
+                "Body To: line is Power Automate routing; SMTP To is the bridge mailbox."
+                if _is_pa_style_template(parts)
+                else None
+            ),
+            "teams_delivery_confirmed": False,
+        }
         row, is_new = create_delivery_idempotent(
             db,
             idempotency_key=key,
@@ -302,7 +432,12 @@ def enqueue_deliveries_for_event(
             destination_type=sub.destination_type,
             destination=dest,
             subject=subj,
-            body=body,
+            body=body_plain,
+            body_plain=body_plain,
+            body_html=body_html,
+            template_id=parts.get("template_id"),
+            template_version=parts.get("template_version"),
+            rendered_payload=payload,
             event_id=event.id,
             subscription_id=sub.id,
         )
@@ -601,20 +736,12 @@ def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, A
             "orig_key": payload.get("orig_key") or "master",
         }
 
-    # Normalize known outbox event_type names
-    mapping = {
-        "event.created": "event.created",
-        "event.confirmed": "event.created",  # reuse created template when approval confirmed
-        "event.transitioned": "event.transitioned",
-        "event.extended": "event.extended",
-        "event.rescheduled": "event.rescheduled",
-        # Impact set changed on an already-published event — reuse created template;
-        # delivery idempotency prevents resending unchanged recipient/reason pairs.
-        "event.impacts_changed": "event.created",
-    }
-    template_key = mapping.get(event_type, event_type)
-    if template_key not in DEFAULT_TEMPLATES:
-        template_key = "event.transitioned"
+    to_status = None
+    if "to" in payload:
+        to_status = str(payload.get("to") or "")
+    elif event_type in {"event.cancelled", "event.completed"}:
+        to_status = event_type.split(".", 1)[-1]
+    template_key = resolve_lifecycle_template_key(event_type, to_status=to_status)
 
     n = enqueue_deliveries_for_event(
         db, event, template_key=template_key, extra_context=extra, reason=template_key
@@ -710,18 +837,31 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
 
     offset = int(payload["offset_minutes"])
     label = f"{abs(offset)}m before start" if offset < 0 else f"{offset}m after start"
-    subject_t, body_t = get_template(db, "event.reminder")
-    extra = {"offset_label": label}
+    parts = render_template_parts(db, "event.reminder")
+    extra: dict[str, Any] = {"offset_label": label}
     if payload.get("occurrence_starts_at"):
         extra["starts_at"] = payload["occurrence_starts_at"]
+    if sub.destination_type == "teams_bridge_channel":
+        extra["bridge_channel_key"] = sub.bridge_channel_key or "default"
+        extra.setdefault(
+            "teams_target_email", f"{sub.bridge_channel_key or 'ops'}@example.com"
+        )
     ctx = event_context(event, extra)
-    subject = render_template(subject_t, ctx)
-    body = render_template(body_t, ctx)
+    subject = render_template(parts["subject_template"], ctx, html_escape=False)
+    body_plain = render_template(parts["body_plain_template"], ctx, html_escape=False)
+    body_html = (
+        render_template(parts["body_html_template"], ctx, html_escape=True)
+        if parts["body_html_template"]
+        else None
+    )
     if sub.destination_type == "teams_bridge_channel":
         channel = "bridge"
-        subj = render_bridge_subject(
-            channel_key=sub.bridge_channel_key or "default", title=event.title
-        )
+        if _is_pa_style_template(parts):
+            subj = subject
+        else:
+            subj = render_bridge_subject(
+                channel_key=sub.bridge_channel_key or "default", title=event.title
+            )
     else:
         channel = "smtp"
         subj = subject
@@ -738,7 +878,22 @@ def process_notify_reminder(db: Session, payload: dict[str, Any]) -> dict[str, A
         destination_type=sub.destination_type,
         destination=sub.destination,
         subject=subj,
-        body=body,
+        body=body_plain,
+        body_plain=body_plain,
+        body_html=body_html,
+        template_id=parts.get("template_id"),
+        template_version=parts.get("template_version"),
+        rendered_payload={
+            "subject": subj,
+            "body_plain": body_plain,
+            "body_html": body_html or "",
+            "template_key": parts.get("key"),
+            "template_id": parts.get("template_id"),
+            "template_version": parts.get("template_version"),
+            "channel": channel,
+            "destination": sub.destination,
+            "destination_type": sub.destination_type,
+        },
         event_id=event.id,
         subscription_id=sub.id,
     )
@@ -759,40 +914,67 @@ def send_delivery(db: Session, delivery_id: str) -> NotificationDelivery:
     delivery.attempt_count += 1
     db.commit()
 
-    if delivery.destination_type == "teams_bridge_channel" or delivery.channel == "bridge":
-        # Extract channel key from subject or subscription
-        channel_key = "default"
-        if delivery.subscription_id:
+    # Retries MUST use the pinned rendered payload — never re-resolve templates.
+    payload = delivery.rendered_payload if isinstance(delivery.rendered_payload, dict) else {}
+    plain = payload.get("body_plain") or delivery.body_plain or delivery.body or ""
+    html_body = payload.get("body_html") or delivery.body_html
+    subject = payload.get("subject") or delivery.subject or ""
+    force_capture = bool(payload.get("capture_only") or payload.get("force_capture"))
+
+    if delivery.destination_type == "teams_bridge_channel" or delivery.channel in {
+        "bridge",
+        "capture",
+    }:
+        channel_key = payload.get("bridge_channel_key") or "default"
+        if channel_key == "default" and delivery.subscription_id:
             sub = db.get(Subscription, delivery.subscription_id)
             if sub and sub.bridge_channel_key:
                 channel_key = sub.bridge_channel_key
+        mailbox = settings.bridge_mailbox or delivery.destination
+        routing = payload.get("teams_target_email") or extract_rendered_routing(
+            body_plain=plain, body_html=html_body or ""
+        )
+        assert_smtp_to_differs_from_route(smtp_to=mailbox or "", routing_email=routing)
         result = get_bridge_adapter().send(
             channel_key=channel_key,
-            title=delivery.subject or "MaintenanceHub",
-            body=delivery.body or "",
-            mailbox=delivery.destination if "@" in (delivery.destination or "") else None,
+            title=subject or "MaintenanceHub",
+            subject=subject,
+            body=plain,
+            body_html=html_body,
+            mailbox=mailbox,
+            force_capture=force_capture,
         )
     else:
         result = get_smtp_adapter().send(
             to=delivery.destination,
-            subject=delivery.subject or "",
-            body=delivery.body or "",
+            subject=subject,
+            body=plain,
+            body_html=html_body,
+            force_capture=force_capture,
         )
 
     if result.ok:
-        # SMTP acceptance is recorded as sent. Uncertain hand-off (accepted but
-        # confirmation lost) still counts as sent so admin retry cannot duplicate.
+        # SMTP acceptance is recorded as sent. This is NOT Teams delivery confirmation.
         delivery.status = DeliveryStatus.sent
         delivery.provider_message_id = result.provider_message_id
         delivery.channel = result.channel
         delivery.last_error = result.error if getattr(result, "uncertain", False) else None
+        if isinstance(delivery.rendered_payload, dict):
+            delivery.rendered_payload = {
+                **delivery.rendered_payload,
+                "teams_delivery_confirmed": False,
+                "smtp_accepted": True,
+                "note": (
+                    "SMTP/log acceptance ≠ Teams delivered. Power Automate confirms Teams separately."
+                ),
+            }
     else:
         if delivery.attempt_count >= settings.delivery_max_attempts:
             delivery.status = DeliveryStatus.dead
         else:
             delivery.status = DeliveryStatus.failed
             delivery.next_attempt_at = _now() + timedelta(seconds=min(3600, 2**delivery.attempt_count))
-            # Re-queue send
+            # Re-queue send — still uses the same pinned rendered_payload / template_version.
             _enqueue_send_job(
                 db,
                 delivery_id=delivery.id,

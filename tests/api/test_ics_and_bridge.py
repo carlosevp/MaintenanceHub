@@ -103,13 +103,15 @@ def test_notification_test_send_log_sink(client):
             "template_key": "event.created",
             "destination_type": "email_address",
             "destination": "test@example.com",
+            "capture_only": True,
         },
         headers=pub,
     )
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["status"] == "sent"
-    assert body["channel"] in {"log", "smtp"}
+    assert body["channel"] in {"log", "smtp", "capture"}
+    assert body["teams_delivery_confirmed"] is False
 
 
 def test_teams_bridge_test_send_subject(client):
@@ -121,9 +123,25 @@ def test_teams_bridge_test_send_subject(client):
             "destination_type": "teams_bridge_channel",
             "destination": "bridge@example.com",
             "bridge_channel_key": "ops-test",
+            "capture_only": True,
         },
         headers=pub,
     )
     assert res.status_code == 200, res.text
     assert "ops-test" in res.json()["subject"]
-    assert "Teams via email bridge" in res.json()["note"]
+    assert "NOT Teams delivery" in res.json()["note"] or "not Teams" in res.json()["note"].lower()
+
+
+def test_real_test_send_requires_admin(client):
+    pub = auth_header(client, "publisher@test.example.com")
+    res = client.post(
+        "/api/v1/notifications/test",
+        json={
+            "template_key": "event.created",
+            "destination_type": "email_address",
+            "destination": "test@example.com",
+            "capture_only": False,
+        },
+        headers=pub,
+    )
+    assert res.status_code == 403
