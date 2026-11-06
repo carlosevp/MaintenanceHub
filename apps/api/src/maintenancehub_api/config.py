@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 AuthMode = Literal["local_dev", "oidc", "ldap"]
 EnvironmentName = Literal["development", "staging", "production"]
+ExperienceProfile = Literal["essentials", "team", "enterprise"]
 
 
 class Settings(BaseSettings):
@@ -78,6 +79,10 @@ class Settings(BaseSettings):
 
     seed_demo_data: bool = True
 
+    # M17 — Essentials | Team | Enterprise (centralized capability registry).
+    # Default Essentials: never silently Enterprise. Unknown values fail closed.
+    experience_profile: ExperienceProfile = "essentials"
+
     job_lease_seconds: int = 30
     job_max_attempts: int = 5
     delivery_max_attempts: int = 5
@@ -89,6 +94,13 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_auth_mode(cls, value: str) -> str:
         return str(value).strip().lower()
+
+    @field_validator("experience_profile", mode="before")
+    @classmethod
+    def normalize_experience_profile(cls, value: object) -> str:
+        from maintenancehub_api.domain.experience import normalize_profile
+
+        return normalize_profile(None if value is None else str(value))
 
     @model_validator(mode="after")
     def fail_closed_local_auth(self) -> Settings:

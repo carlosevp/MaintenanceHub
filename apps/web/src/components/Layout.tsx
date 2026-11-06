@@ -1,65 +1,115 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useState } from "react";
+import { Link, NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "@/features/auth/AuthContext";
+import { useExperience } from "@/features/experience/ExperienceContext";
+import { getTheme, toggleTheme } from "@/lib/theme";
 import clsx from "clsx";
-
-const baseLinks = [
-  { to: "/", label: "My Applications" },
-  { to: "/calendar", label: "Calendar" },
-  { to: "/catalog", label: "Catalog" },
-  { to: "/subscriptions", label: "Subscriptions" },
-  { to: "/banner-demo", label: "Banner" },
-  { to: "/events/new", label: "Publish" },
-  { to: "/about", label: "About" },
-];
 
 export function Layout() {
   const { user, logout } = useAuth();
-  const isAdmin = user?.roles.includes("platform_administrator");
-  const links = isAdmin
-    ? [...baseLinks.slice(0, -1), { to: "/admin", label: "Admin" }, baseLinks[baseLinks.length - 1]]
-    : baseLinks;
+  const { can, label: profileLabel } = useExperience();
+  const [theme, setThemeState] = useState(getTheme());
+  const isPublisher =
+    user?.roles.some((r) =>
+      ["publisher", "application_owner", "platform_administrator"].includes(r),
+    ) ?? false;
+  const isAdmin = user?.roles.includes("platform_administrator") ?? false;
+  const showAdmin = isAdmin && can("admin_workspace");
+
+  const primary = [
+    { to: "/", label: "Overview", end: true },
+    { to: "/calendar", label: "Calendar", end: false },
+    { to: "/alerts", label: "My Alerts", end: false },
+  ];
 
   return (
     <div className="min-h-screen">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-ink-900 focus:px-3 focus:py-2 focus:text-sm focus:text-white"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-ink focus:px-3 focus:py-2 focus:text-sm focus:text-accent-fg"
       >
         Skip to main content
       </a>
-      <header className="border-b border-ink-200/70 bg-white/70 backdrop-blur">
-        <div className="mh-shell flex flex-wrap items-center justify-between gap-4 py-4">
-          <div className="flex items-baseline gap-3">
-            <NavLink to="/" className="font-display text-2xl font-semibold tracking-tight text-ink-950">
+      <header className="border-b border-ink-200/80 bg-surface/80 backdrop-blur-md">
+        <div className="mh-shell flex flex-wrap items-center justify-between gap-2 py-3 sm:gap-3 sm:py-3.5">
+          <div className="flex min-w-0 items-baseline gap-2 sm:gap-3">
+            <NavLink
+              to="/"
+              className="font-display text-xl font-semibold tracking-tight text-ink sm:text-2xl"
+            >
               MaintenanceHub
             </NavLink>
-            <span className="hidden text-xs font-medium uppercase tracking-[0.16em] text-ink-400 sm:inline">
-              Outage communication
+            <span className="hidden text-[10px] font-semibold uppercase tracking-[0.18em] text-ink-faint sm:inline">
+              {profileLabel}
             </span>
           </div>
-          <nav className="flex flex-wrap items-center gap-1" aria-label="Primary">
-            {links.map((l) => (
+
+          <nav
+            className="order-3 flex w-full gap-1 overflow-x-auto pb-0.5 sm:order-none sm:w-auto sm:flex-wrap sm:overflow-visible"
+            aria-label="Primary"
+          >
+            {primary.map((l) => (
               <NavLink
                 key={l.to}
                 to={l.to}
-                end={l.to === "/"}
+                end={l.end}
                 className={({ isActive }) =>
                   clsx(
                     "rounded-md px-3 py-1.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                    isActive
-                      ? "bg-ink-900 text-white"
-                      : "text-ink-700 hover:bg-ink-100",
+                    isActive ? "bg-ink text-accent-fg" : "text-ink-muted hover:bg-accent-soft hover:text-ink",
                   )
                 }
               >
                 {l.label}
               </NavLink>
             ))}
+            {can("catalog_browse") && (
+              <NavLink
+                to="/catalog"
+                className={({ isActive }) =>
+                  clsx(
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                    isActive ? "bg-ink text-accent-fg" : "text-ink-muted hover:bg-accent-soft hover:text-ink",
+                  )
+                }
+              >
+                Apps
+              </NavLink>
+            )}
+            {showAdmin && (
+              <NavLink
+                to="/admin"
+                className={({ isActive }) =>
+                  clsx(
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition",
+                    isActive
+                      ? "bg-ink text-accent-fg"
+                      : "border border-ink-200 text-ink-muted hover:bg-accent-soft",
+                  )
+                }
+              >
+                Admin
+              </NavLink>
+            )}
           </nav>
-          <div className="flex items-center gap-3 text-sm">
-            <div className="text-right leading-tight">
-              <div className="font-medium text-ink-900">{user?.display_name}</div>
-              <div className="text-xs text-ink-500">{user?.roles.join(", ")}</div>
+
+          <div className="flex items-center gap-2">
+            {isPublisher && (
+              <Link to="/events/new?quick=1" className="mh-btn whitespace-nowrap">
+                Schedule maintenance
+              </Link>
+            )}
+            <button
+              type="button"
+              className="mh-btn-ghost px-2.5"
+              aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
+              onClick={() => setThemeState(toggleTheme())}
+            >
+              {theme === "dark" ? "Light" : "Dark"}
+            </button>
+            <div className="hidden text-right leading-tight sm:block">
+              <div className="text-sm font-medium text-ink">{user?.display_name}</div>
+              <div className="text-[11px] text-ink-faint">{user?.roles.join(", ")}</div>
             </div>
             <button type="button" className="mh-btn-ghost" onClick={logout}>
               Sign out
@@ -70,6 +120,19 @@ export function Layout() {
       <main id="main-content" className="mh-shell py-8" tabIndex={-1}>
         <Outlet />
       </main>
+      <footer className="mh-shell border-t border-ink-200/60 py-6 text-xs text-ink-faint">
+        <div className="flex flex-wrap gap-4">
+          <Link to="/about" className="hover:text-ink">
+            About & limitations
+          </Link>
+          {can("banner_embed") && (
+            <Link to="/banner-demo" className="hover:text-ink">
+              Banner embed
+            </Link>
+          )}
+          <span>Communication platform — not monitoring</span>
+        </div>
+      </footer>
     </div>
   );
 }

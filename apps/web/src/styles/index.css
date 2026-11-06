@@ -2,18 +2,103 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --mh-ink: #223345;
-  --mh-surface: #f4f7fb;
-  --mh-accent: #0f766e;
+/*
+  M17 — Modern Operational Minimalism
+  Navy/charcoal structure, warm neutrals, muted iris accent.
+  Amber/red reserved for warnings and outages only.
+*/
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --mh-canvas: #f4f1ec;
+  --mh-canvas-accent: #ebe6df;
+  --mh-surface: #fffcf8;
+  --mh-surface-raised: #ffffff;
+  --mh-border: #d9d2c8;
+  --mh-border-strong: #c4bbb0;
+  --mh-ink: #1a2332;
+  --mh-ink-muted: #4a5568;
+  --mh-ink-faint: #5c6575;
+  --mh-accent: #5c6b8a;
+  --mh-accent-soft: #e4e8f0;
+  --mh-accent-strong: #3f4d6a;
+  --mh-accent-fg: #ffffff;
+  --mh-warn: #b86a1c;
+  --mh-warn-soft: #f8e8d4;
+  --mh-danger: #b33a3a;
+  --mh-danger-soft: #f6e0e0;
+  --mh-ok: #3d6b52;
+  --mh-ok-soft: #ddeae3;
+  --mh-shadow: 0 1px 0 rgba(26, 35, 50, 0.04), 0 10px 28px rgba(26, 35, 50, 0.06);
+  --mh-focus: #5c6b8a;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+  --mh-canvas: #0f1218;
+  --mh-canvas-accent: #161b24;
+  --mh-surface: #171b24;
+  --mh-surface-raised: #1e2430;
+  --mh-border: #2c3444;
+  --mh-border-strong: #3d475c;
+  --mh-ink: #ebe6df;
+  --mh-ink-muted: #b7b0a6;
+  --mh-ink-faint: #9a948a;
+  --mh-accent: #8b98b5;
+  --mh-accent-soft: #252c3c;
+  --mh-accent-strong: #aeb8cf;
+  --mh-accent-fg: #0f1218;
+  --mh-warn: #d4923a;
+  --mh-warn-soft: #3a2a16;
+  --mh-danger: #d96a6a;
+  --mh-danger-soft: #3a1f1f;
+  --mh-ok: #7aaf90;
+  --mh-ok-soft: #1c2c24;
+  --mh-shadow: 0 1px 0 rgba(0, 0, 0, 0.35), 0 14px 36px rgba(0, 0, 0, 0.35);
+  --mh-focus: #8b98b5;
 }
 
 body {
   min-height: 100vh;
+  color: var(--mh-ink);
   background:
-    radial-gradient(1200px 500px at 10% -10%, rgba(15, 118, 110, 0.12), transparent 55%),
-    radial-gradient(900px 400px at 100% 0%, rgba(180, 83, 9, 0.08), transparent 50%),
-    linear-gradient(180deg, #eef3f8 0%, #f7f9fc 40%, #f4f7fb 100%);
+    radial-gradient(900px 420px at 0% -5%, color-mix(in srgb, var(--mh-accent) 12%, transparent), transparent 55%),
+    radial-gradient(700px 360px at 100% 0%, color-mix(in srgb, var(--mh-warn) 7%, transparent), transparent 50%),
+    linear-gradient(180deg, var(--mh-canvas-accent) 0%, var(--mh-canvas) 45%, var(--mh-canvas) 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@layer utilities {
+  .animate-rise {
+    animation: rise 0.4s ease-out both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .animate-rise {
+      animation: none !important;
+    }
+  }
 }
 
 @layer components {
@@ -22,22 +107,78 @@ body {
   }
 
   .mh-panel {
-    @apply rounded-xl border border-ink-200/80 bg-white/90 shadow-panel backdrop-blur;
+    border: 1px solid var(--mh-border);
+    background: color-mix(in srgb, var(--mh-surface) 94%, transparent);
+    border-radius: 0.875rem;
+    box-shadow: var(--mh-shadow);
+    backdrop-filter: blur(8px);
   }
 
   .mh-btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-md bg-accent px-3.5 py-2 text-sm font-semibold text-white transition hover:bg-accent-strong focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-50;
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-semibold transition disabled:opacity-50;
+    background: var(--mh-accent);
+    color: var(--mh-accent-fg);
+  }
+  .mh-btn:hover {
+    background: var(--mh-accent-strong);
+  }
+  .mh-btn:focus-visible {
+    outline: 2px solid var(--mh-focus);
+    outline-offset: 2px;
   }
 
   .mh-btn-ghost {
-    @apply inline-flex items-center justify-center gap-2 rounded-md border border-ink-200 bg-white px-3.5 py-2 text-sm font-medium text-ink-800 transition hover:bg-ink-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-medium transition;
+    border: 1px solid var(--mh-border);
+    background: var(--mh-surface-raised);
+    color: var(--mh-ink);
+  }
+  .mh-btn-ghost:hover {
+    background: var(--mh-accent-soft);
+  }
+  .mh-btn-ghost:focus-visible {
+    outline: 2px solid var(--mh-focus);
+    outline-offset: 2px;
+  }
+
+  .mh-btn-danger {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-3.5 py-2 text-sm font-semibold text-white transition;
+    background: var(--mh-danger);
   }
 
   .mh-input {
-    @apply w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm text-ink-900 shadow-sm placeholder:text-ink-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/30;
+    @apply w-full rounded-md px-3 py-2 text-sm shadow-sm;
+    border: 1px solid var(--mh-border);
+    background: var(--mh-surface-raised);
+    color: var(--mh-ink);
+  }
+  .mh-input::placeholder {
+    color: var(--mh-ink-faint);
+  }
+  .mh-input:focus {
+    border-color: var(--mh-accent);
+    outline: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--mh-accent) 28%, transparent);
   }
 
   .mh-label {
-    @apply mb-1 block text-xs font-semibold uppercase tracking-wide text-ink-500;
+    @apply mb-1 block text-xs font-semibold tracking-wide;
+    color: var(--mh-ink-muted);
+  }
+
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .mh-eyebrow {
+    @apply text-xs font-semibold uppercase tracking-[0.16em];
+    color: var(--mh-accent);
+  }
+
+  .mh-muted {
+    color: var(--mh-ink-muted);
   }
 }

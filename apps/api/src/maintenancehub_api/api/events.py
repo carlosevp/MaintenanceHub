@@ -145,8 +145,11 @@ def create_event(
     db: Session = Depends(get_db),
     user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
 ) -> EventOut:
+    from maintenancehub_api.api.experience import require_capability
+
     data = body.model_dump()
     if body.recurrence is not None:
+        require_capability("recurrence_editor")
         data["recurrence"] = body.recurrence.model_dump(exclude_none=True)
     app_ids = {
         i.target_id
@@ -217,6 +220,9 @@ def put_recurrence(
     db: Session = Depends(get_db),
     user: AuthUser = Depends(require_roles("publisher", "application_owner", "platform_administrator")),
 ) -> EventOut:
+    from maintenancehub_api.api.experience import require_capability
+
+    require_capability("recurrence_editor")
     event = event_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")

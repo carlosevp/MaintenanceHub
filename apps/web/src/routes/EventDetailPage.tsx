@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { api, type MaintenanceEvent, type TimelineEntry } from "@/api/client";
-import { ApprovalBadge, KindBadge, StatusBadge } from "@/components/StatusBadge";
+import { KindBadge, PrimaryStatusBadge, StatusBadge } from "@/components/StatusBadge";
 import { fmtRange, fmtWhen } from "@/lib/format";
 import { useAuth } from "@/features/auth/AuthContext";
 
@@ -243,29 +243,43 @@ export function EventDetailPage() {
       </Link>
       <div className="mh-panel animate-rise p-6">
         <div className="flex flex-wrap gap-2">
-          <KindBadge kind={event.kind} />
-          <StatusBadge status={event.status} />
-          <ApprovalBadge state={event.approval_state} />
+          <PrimaryStatusBadge
+            status={event.status}
+            approvalState={event.approval_state}
+            kind={event.kind}
+            showExplanation
+          />
           {event.is_recurring && (
-            <span className="rounded-md bg-teal-100 px-2 py-0.5 text-xs font-bold uppercase text-teal-900">
+            <span className="rounded-md border border-ink-200 bg-accent-soft px-2 py-0.5 text-xs font-semibold text-ink">
               Recurring series
             </span>
           )}
         </div>
-        <h1 className="mt-3 font-display text-3xl font-semibold text-ink-950">{event.title}</h1>
-        <p className="mt-2 text-sm text-ink-600">{fmtRange(event.starts_at, event.ends_at)}</p>
-        <p className="mt-1 text-xs text-ink-500">
-          Timezone: {event.timezone}
-          {event.is_recurring
-            ? " · Series defaults below; lifecycle is per occurrence"
-            : ""}
+        <h1 className="mt-3 font-display text-3xl font-semibold text-ink">
+          {event.title.replace("[DEMO] ", "")}
+        </h1>
+        <p className="mt-2 text-sm text-ink-muted">
+          {fmtRange(event.starts_at, event.ends_at, event.timezone)}
         </p>
-        {event.description && <p className="mt-4 text-ink-800">{event.description}</p>}
+        {event.description && <p className="mt-4 text-ink">{event.description}</p>}
         {event.expected_impact && (
           <p className="mt-2 text-sm">
-            <span className="font-semibold">Expected impact:</span> {event.expected_impact}
+            <span className="font-semibold text-ink-muted">Impact:</span> {event.expected_impact}
           </p>
         )}
+        <details className="mt-4 text-sm text-ink-muted">
+          <summary className="cursor-pointer list-none underline [&::-webkit-details-marker]:hidden">
+            Technical status
+          </summary>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <KindBadge kind={event.kind} />
+            <StatusBadge status={event.status} />
+            <span className="text-xs">
+              approval: {event.approval_state} · TZ {event.timezone}
+              {event.is_recurring ? " · lifecycle is per occurrence" : ""}
+            </span>
+          </div>
+        </details>
         {event.recurrence && (
           <div className="mt-3 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-950">
             <p className="font-semibold">{event.recurrence.summary}</p>

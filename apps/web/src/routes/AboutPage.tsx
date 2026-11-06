@@ -28,6 +28,10 @@ export function AboutPage() {
           </li>
           <li>ICS feeds refresh on client poll — not push-realtime</li>
           <li>
+            Experience profile is deploy-time (<code>EXPERIENCE_PROFILE</code>); Essentials omits
+            integrations/admin
+          </li>
+          <li>
             Admin workspace under <code>/admin</code> (platform administrators only; API-enforced)
           </li>
           <li>Do not put long-lived service client secrets in browser banner embeds</li>

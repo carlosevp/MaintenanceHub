@@ -22,6 +22,7 @@ from maintenancehub_api.api import (
     catalog,
     dashboard,
     events,
+    experience,
     health,
     impact_analysis,
     notifications,
@@ -118,6 +119,7 @@ def create_app() -> FastAPI:
         )
 
     app.include_router(health.router)
+    app.include_router(experience.router, prefix="/api/v1")
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(catalog.router, prefix="/api/v1")
     app.include_router(events.router, prefix="/api/v1")

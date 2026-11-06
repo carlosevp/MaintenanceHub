@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from maintenancehub_api.adapters.servicenow import get_change_adapter
+from maintenancehub_api.api.experience import require_capability
 from maintenancehub_api.auth.security import hash_password
 from maintenancehub_api.config import get_settings
 from maintenancehub_api.db import get_db
@@ -88,6 +89,7 @@ def poll_now(
     db: Session = Depends(get_db),
     user: AuthUser = Depends(require_roles(RoleName.platform_administrator.value)),
 ) -> dict[str, Any]:
+    require_capability("servicenow")
     body = body or PollNowBody()
     settings = get_settings()
 
@@ -225,6 +227,7 @@ async def upload_csv(
 ) -> dict[str, Any]:
     import json
 
+    require_capability("csv_import")
     raw = (await file.read()).decode("utf-8-sig")
     cmap = json.loads(column_map_json) if column_map_json else None
     try:

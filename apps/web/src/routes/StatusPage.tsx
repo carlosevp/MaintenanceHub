@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useLocation, useParams, useSearchParams } from "react-router-dom";
 import { api } from "@/api/client";
-import { KindBadge, StatusBadge } from "@/components/StatusBadge";
+import { PrimaryStatusBadge } from "@/components/StatusBadge";
 import { fmtRange } from "@/lib/format";
 
 type StatusEvent = {
@@ -130,16 +130,12 @@ export function StatusEventPage() {
       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-500">Event status</p>
       <h1 className="font-display text-3xl font-semibold text-ink-950">{String(data.title)}</h1>
       <div className="flex flex-wrap gap-2">
-        <KindBadge kind={String(data.kind)} />
-        <StatusBadge status={String(data.status)} />
-        <span className="rounded-md bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-700">
-          {String(data.approval_state)}
-        </span>
-        {data.phase ? (
-          <span className="rounded-md bg-accent-soft px-2 py-0.5 text-xs font-medium text-accent">
-            phase: {String(data.phase)}
-          </span>
-        ) : null}
+        <PrimaryStatusBadge
+          status={String(data.status)}
+          approvalState={String(data.approval_state || "")}
+          kind={String(data.kind)}
+          showExplanation
+        />
       </div>
       {starts && ends && (
         <p className="text-sm text-ink-700">
@@ -195,10 +191,7 @@ function StatusSection({
                   </div>
                 )}
               </div>
-              <div className="flex gap-2">
-                <KindBadge kind={e.kind} />
-                <StatusBadge status={e.status} />
-              </div>
+              <PrimaryStatusBadge status={e.status} kind={e.kind} />
             </li>
           ))}
         </ul>

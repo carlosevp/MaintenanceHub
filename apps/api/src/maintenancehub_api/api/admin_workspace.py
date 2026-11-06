@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session, joinedload
 
+from maintenancehub_api.api.experience import require_capability
 from maintenancehub_api.config import get_settings
 from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, require_roles
@@ -31,7 +32,16 @@ from maintenancehub_api.models import (
     UserRole,
 )
 
-router = APIRouter(prefix="/admin", tags=["admin-workspace"])
+def _require_admin_workspace() -> None:
+    """Router-level gate — Essentials/Team fail closed (no silent Enterprise admin)."""
+    require_capability("admin_workspace")
+
+
+router = APIRouter(
+    prefix="/admin",
+    tags=["admin-workspace"],
+    dependencies=[Depends(_require_admin_workspace)],
+)
 _ADMIN = RoleName.platform_administrator.value
 
 

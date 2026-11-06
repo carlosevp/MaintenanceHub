@@ -4,7 +4,7 @@ Internal **Maintenance & Outage Communication Platform**.
 
 This is **not** a monitoring product. Status is published by people (planned maintenance, extensions, manual outages). Platform `/healthz` and `/readyz` exist only for pod liveness/readiness.
 
-Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M16** (catalog through consumer/publisher UX, including M3b recurrence, occurrence lifecycle, impact analysis, admin workspace). See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for remaining gaps.
+Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M17** (catalog through consumer/publisher UX, experience profiles, and Modern Operational Minimalism redesign). See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for remaining gaps.
 
 ## Stack
 
@@ -148,8 +148,27 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). **`main` is the default base.** Open one
 | M14 Impact analysis & notification preview | Yes |
 | M15 Enterprise administration workspace | Yes |
 | M16 Consumer & publisher experience | Yes |
+| M17 UX redesign + experience profiles | Yes |
 
 Unsupported capabilities: [docs/LIMITATIONS.md](docs/LIMITATIONS.md) and in-app **About**.
+
+### Zero-config demo (M17)
+
+Synthetic data, local_dev auth, and **captured notifications** under `data/notification-capture/` (SMTP off). No ServiceNow, SMTP relay, or AD required.
+
+```bash
+make demo              # Essentials (default) — Claims INT story available
+make demo-essentials   # same as make demo
+make demo-team         # Team — Weekly Payments + Oracle NON-PROD impact stories
+make demo-enterprise   # Enterprise — full admin / SN / CSV surfaces
+make demo-stop
+```
+
+Three **presentation-only** demo stories appear in the Overview “Demo stories” selector. Selecting a story navigates to seeded data; it **cannot** unlock APIs disabled by `EXPERIENCE_PROFILE`. Unknown profiles fail closed (never silent Enterprise).
+
+Prints URL + demo credentials. Refuses to run when `ENVIRONMENT` is staging/production.
+
+Screenshots: [docs/artifacts/m17/](docs/artifacts/m17/).
 
 ## Auth safety
 

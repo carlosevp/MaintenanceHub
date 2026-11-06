@@ -1,12 +1,20 @@
-"""SMTP transport + log sink when SMTP_ENABLED=false (ADR-004 / ADR-012)."""
+"""SMTP transport + log sink when SMTP_ENABLED=false (ADR-004 / ADR-012).
+
+When MH_NOTIFICATION_CAPTURE_DIR is set (demo), each send is also written as a
+JSON file under that directory so demos need no real SMTP.
+"""
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import smtplib
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from email.message import EmailMessage
+from pathlib import Path
 
 from maintenancehub_api.config import get_settings
 
@@ -25,6 +33,35 @@ class SendResult:
     uncertain: bool = False
 
 
+def _capture_notification(*, to: str, subject: str, body: str, msg_id: str, channel: str) -> None:
+    """Write a captured notification for local demos (no SMTP required)."""
+    raw = os.environ.get("MH_NOTIFICATION_CAPTURE_DIR", "").strip()
+    if not raw:
+        return
+    try:
+        dest = Path(raw)
+        dest.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        path = dest / f"{stamp}-{msg_id}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "id": msg_id,
+                    "channel": channel,
+                    "to": to,
+                    "subject": subject,
+                    "body": body,
+                    "captured_at": datetime.now(timezone.utc).isoformat(),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        logger.exception("Failed to capture notification under %s", raw)
+
+
 class SmtpAdapter:
     def send(self, *, to: str, subject: str, body: str) -> SendResult:
         settings = get_settings()
@@ -36,6 +73,9 @@ class SmtpAdapter:
                 subject,
                 body[:500],
                 msg_id,
+            )
+            _capture_notification(
+                to=to, subject=subject, body=body, msg_id=msg_id, channel="log"
             )
             return SendResult(ok=True, provider_message_id=msg_id, channel="log")
 
@@ -58,6 +98,9 @@ class SmtpAdapter:
                 smtp.send_message(message)
                 handed_off = True
             msg_id = message.get("Message-ID") or f"smtp-{uuid.uuid4().hex[:12]}"
+            _capture_notification(
+                to=to, subject=subject, body=body, msg_id=str(msg_id), channel="smtp"
+            )
             return SendResult(ok=True, provider_message_id=msg_id, channel="smtp")
         except Exception as exc:  # noqa: BLE001
             logger.exception("SMTP send failed (handed_off=%s)", handed_off)

@@ -11,11 +11,11 @@ import { ImpactAnalysisPanel } from "@/components/ImpactAnalysisPanel";
 import { RecurrenceEditor, defaultRecurrence, type RecurrenceValue } from "@/components/RecurrenceEditor";
 import type { ConfirmReady, ExclusionRow } from "@/lib/impactPreviewSession";
 import { localWallTimeToUtcIso, ZonedDateTimeError } from "@/lib/zonedDateTime";
+import { useExperience } from "@/features/experience/ExperienceContext";
 import clsx from "clsx";
 
 type Step = "details" | "impact" | "audience" | "review";
 const DRAFT_KEY = "mh_publish_draft_v1";
-const STEPS: Step[] = ["details", "impact", "audience", "review"];
 const STEP_LABELS: Record<Step, string> = {
   details: "Details",
   impact: "Impact",
@@ -50,20 +50,37 @@ const TEMPLATES = [
 export function EventCreatePage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const quick = params.get("quick") === "1" || params.get("kind") === "manual_outage";
-  const initialKind = params.get("kind") === "manual_outage" ? "manual_outage" : "planned_maintenance";
+  const { can, defaultTimezone, loading: experienceLoading } = useExperience();
+  const reportingOutage = params.get("kind") === "manual_outage";
+  const quick = params.get("quick") === "1" || reportingOutage;
+  const useImpactFlow = can("impact_analysis") && !quick;
+  const STEPS: Step[] = useImpactFlow
+    ? ["details", "impact", "audience", "review"]
+    : ["details", "review"];
+  const initialKind = reportingOutage ? "manual_outage" : "planned_maintenance";
 
   const [step, setStep] = useState<Step>("details");
+  const [showMore, setShowMore] = useState(!quick);
   const [apps, setApps] = useState<Application[]>([]);
   const [envs, setEnvs] = useState<Environment[]>([]);
   const [infra, setInfra] = useState<InfraComponent[]>([]);
   const [kind, setKind] = useState(initialKind);
-  const [title, setTitle] = useState(quick ? "Manual outage" : "");
+  // Never prefill "Manual outage" when scheduling planned maintenance via Quick Publish.
+  const [title, setTitle] = useState(reportingOutage ? "Manual outage" : "");
   const [description, setDescription] = useState("");
-  const [impact, setImpact] = useState(quick ? "Service unavailable — investigating" : "");
+  const [impact, setImpact] = useState(
+    reportingOutage ? "Service unavailable — investigating" : "",
+  );
   const [starts, setStarts] = useState("");
   const [ends, setEnds] = useState("");
-  const [timezone, setTimezone] = useState("America/Chicago");
+  const [timezone, setTimezone] = useState(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch {
+      return "UTC";
+    }
+  });
+  const [tzSource, setTzSource] = useState<"browser" | "configured">("browser");
   const [targetKind, setTargetKind] = useState<"application" | "infra_component">("application");
   const [appId, setAppId] = useState("");
   const [envId, setEnvId] = useState("");
@@ -84,6 +101,24 @@ export function EventCreatePage() {
   const [reviewedManuals, setReviewedManuals] = useState<ImpactSeed[]>([]);
   const [draftSaved, setDraftSaved] = useState(false);
 
+  // Apply configured deploy/demo TZ once experience loads (overrides bare UTC browser default).
+  useEffect(() => {
+    if (experienceLoading) return;
+    let browser = "UTC";
+    try {
+      browser = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch {
+      /* keep UTC */
+    }
+    if (defaultTimezone) {
+      setTimezone(defaultTimezone);
+      setTzSource("configured");
+    } else {
+      setTimezone(browser);
+      setTzSource("browser");
+    }
+  }, [defaultTimezone, experienceLoading]);
+
   useEffect(() => {
     void (async () => {
       const [a, e, i] = await Promise.all([
@@ -98,12 +133,7 @@ export function EventCreatePage() {
       if (i[0]) setInfraId(i[0].id);
       if (e.find((x) => x.key === "PROD")) setEnvId(e.find((x) => x.key === "PROD")!.id);
       else if (e[0]) setEnvId(e[0].id);
-      const nonProd = e.find((x) => x.key === "NON-PROD");
-      if (nonProd && i.some((x) => x.key.includes("oracle"))) {
-        setTargetKind("infra_component");
-        setInfraId(i.find((x) => x.key.includes("oracle"))!.id);
-        setEnvId(nonProd.id);
-      }
+      // Do not auto-select Oracle/infra for Quick Publish — that conflicts with a simple app window.
       try {
         const raw = localStorage.getItem(DRAFT_KEY);
         if (raw && !quick) {
@@ -113,7 +143,10 @@ export function EventCreatePage() {
           if (d.impact) setImpact(d.impact);
           if (d.starts) setStarts(d.starts);
           if (d.ends) setEnds(d.ends);
-          if (d.timezone) setTimezone(d.timezone);
+          if (d.timezone) {
+            setTimezone(d.timezone);
+            setTzSource("browser");
+          }
           if (d.kind) setKind(d.kind);
         }
       } catch {
@@ -217,7 +250,38 @@ export function EventCreatePage() {
   function onDetailsContinue(e: FormEvent) {
     e.preventDefault();
     if (!validateDetails()) return;
-    setStep("impact");
+    if (useImpactFlow) {
+      setStep("impact");
+      return;
+    }
+    setStep("review");
+  }
+
+  async function onSimplePublish() {
+    if (!validateDetails()) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const startsAt = localWallTimeToUtcIso(starts, timezone);
+      const endsAt = localWallTimeToUtcIso(ends, timezone);
+      const created = await api.createEvent({
+        kind,
+        title,
+        description: publisherNote ? `${description}\n\nPublisher note: ${publisherNote}` : description,
+        expected_impact: impact,
+        approval_state: "confirmed_scheduled",
+        starts_at: startsAt,
+        ends_at: endsAt,
+        timezone,
+        impacts: seeds,
+      });
+      localStorage.removeItem(DRAFT_KEY);
+      navigate(`/events/${created.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Publish failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function onImpactContinue() {
@@ -336,22 +400,26 @@ export function EventCreatePage() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h1 className="font-display text-3xl font-semibold text-ink-950">
-              {quick
-                ? "Quick Publish outage"
-                : kind === "manual_outage"
-                  ? "Report manual outage"
-                  : "Publish maintenance"}
+              {reportingOutage
+                ? "Report an outage"
+                : quick
+                  ? "Schedule maintenance"
+                  : kind === "manual_outage"
+                    ? "Report an outage"
+                    : "Publish maintenance"}
             </h1>
-            <p className="mt-2 text-sm text-ink-600">
-              Four steps: Details → Impact → Audience/reminders → Review. Confirmed impacts are never
-              inferred from the window alone. Series defaults apply to occurrences unless an occurrence
-              override is set later.
+            <p className="mt-2 text-sm text-ink-muted">
+              {useImpactFlow
+                ? "What, when, impact, then who gets notified. Confirmed communication is never inferred from the window alone."
+                : "What is changing, when, and who it affects. Add more detail only if you need it."}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Link to="/events/new?quick=1&kind=manual_outage" className="mh-btn-ghost text-sm">
-              Quick Publish
-            </Link>
+            {!reportingOutage && (
+              <Link to="/events/new?quick=1&kind=manual_outage" className="mh-btn-ghost text-sm">
+                Report outage
+              </Link>
+            )}
             <button type="button" className="mh-btn-ghost text-sm" onClick={saveDraft}>
               {draftSaved ? "Draft saved" : "Save draft"}
             </button>
@@ -391,116 +459,43 @@ export function EventCreatePage() {
                 </select>
               </div>
             )}
-            <div>
-              <label className="mh-label" htmlFor="kind">
-                Kind
-              </label>
-              <select id="kind" className="mh-input" value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="planned_maintenance">Planned maintenance</option>
-                <option value="manual_outage">Manual outage</option>
-              </select>
-            </div>
+            {!quick && (
+              <div>
+                <label className="mh-label" htmlFor="kind">
+                  Type
+                </label>
+                <select
+                  id="kind"
+                  className="mh-input"
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value)}
+                >
+                  <option value="planned_maintenance">Planned maintenance</option>
+                  <option value="manual_outage">Manual outage</option>
+                </select>
+              </div>
+            )}
             <div>
               <label className="mh-label" htmlFor="title">
-                Title
+                What
               </label>
               <input
                 id="title"
                 className="mh-input"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
+                placeholder={reportingOutage ? "e.g. Claims login failures" : "e.g. Payments deploy window"}
                 required
               />
             </div>
-            <div>
-              <label className="mh-label" htmlFor="desc">
-                Description
-              </label>
-              <textarea
-                id="desc"
-                className="mh-input"
-                rows={3}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="mh-label" htmlFor="impact">
-                Expected impact
-              </label>
-              <input id="impact" className="mh-input" value={impact} onChange={(e) => setImpact(e.target.value)} />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mh-label" htmlFor="starts">
-                  Starts (local in selected TZ)
-                </label>
-                <input
-                  id="starts"
-                  type="datetime-local"
-                  className="mh-input"
-                  value={starts}
-                  onChange={(e) => setStarts(e.target.value)}
-                  required
-                />
-              </div>
-              <div>
-                <label className="mh-label" htmlFor="ends">
-                  Ends (local in selected TZ)
-                </label>
-                <input
-                  id="ends"
-                  type="datetime-local"
-                  className="mh-input"
-                  value={ends}
-                  onChange={(e) => setEnds(e.target.value)}
-                  required
-                />
-              </div>
-            </div>
-            <div>
-              <label className="mh-label" htmlFor="tz">
-                Timezone (IANA)
-              </label>
-              <input
-                id="tz"
-                className="mh-input"
-                value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
-              />
-              <p className="mt-1 text-xs text-ink-500">
-                datetime-local values are interpreted in this zone (not the browser zone).
-              </p>
-            </div>
-
-            {kind === "planned_maintenance" && (
-              <>
-                <RecurrenceEditor
-                  enabled={recurring}
-                  onEnabledChange={setRecurring}
-                  value={recurrence}
-                  onChange={setRecurrence}
-                  startsAt={starts}
-                  endsAt={ends}
-                  timezone={timezone}
-                />
-                {recurring && (
-                  <p className="rounded-md border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-600">
-                    Series defaults (title, expected impact, primary targets) apply to each occurrence.
-                    Reschedule, cancel, extend, and occurrence impact overrides are edited on the
-                    occurrence detail after publish.
-                  </p>
-                )}
-              </>
-            )}
 
             <fieldset className="rounded-lg border border-ink-200 p-3">
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-500">
-                Primary target
+              <legend className="px-1 text-sm font-semibold text-ink">
+                What’s changing
               </legend>
               <div className="mb-3">
                 <label className="mh-label" htmlFor="targetKind">
-                  Target type
+                  Target
                 </label>
                 <select
                   id="targetKind"
@@ -509,7 +504,7 @@ export function EventCreatePage() {
                   onChange={(e) => setTargetKind(e.target.value as "application" | "infra_component")}
                 >
                   <option value="application">Application</option>
-                  <option value="infra_component">Infrastructure component</option>
+                  {!quick && <option value="infra_component">Infrastructure</option>}
                 </select>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
@@ -523,7 +518,7 @@ export function EventCreatePage() {
                   >
                     {apps.map((a) => (
                       <option key={a.id} value={a.id}>
-                        {a.name}
+                        {a.name.replace("[DEMO] ", "")}
                       </option>
                     ))}
                   </select>
@@ -537,7 +532,7 @@ export function EventCreatePage() {
                   >
                     {infra.map((i) => (
                       <option key={i.id} value={i.id}>
-                        {i.name}
+                        {i.name.replace("[DEMO] ", "")}
                       </option>
                     ))}
                   </select>
@@ -557,29 +552,144 @@ export function EventCreatePage() {
               </div>
             </fieldset>
 
-            <fieldset className="rounded-lg border border-dashed border-ink-200 p-3">
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-500">
-                Optional second application impact
-              </legend>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <select className="mh-input" value={appId2} onChange={(e) => setAppId2(e.target.value)}>
-                  <option value="">None</option>
-                  {apps.map((a) => (
-                    <option key={a.id} value={a.id}>
-                      {a.name}
-                    </option>
-                  ))}
-                </select>
-                <select className="mh-input" value={envId2} onChange={(e) => setEnvId2(e.target.value)}>
-                  <option value="">—</option>
-                  {envs.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.key}
-                    </option>
-                  ))}
-                </select>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mh-label" htmlFor="starts">
+                  Starts
+                </label>
+                <input
+                  id="starts"
+                  type="datetime-local"
+                  className="mh-input"
+                  value={starts}
+                  onChange={(e) => setStarts(e.target.value)}
+                  required
+                />
               </div>
-            </fieldset>
+              <div>
+                <label className="mh-label" htmlFor="ends">
+                  Ends
+                </label>
+                <input
+                  id="ends"
+                  type="datetime-local"
+                  className="mh-input"
+                  value={ends}
+                  onChange={(e) => setEnds(e.target.value)}
+                  required
+                />
+              </div>
+            </div>
+            <div>
+              <label className="mh-label" htmlFor="tz">
+                Time zone
+              </label>
+              <input
+                id="tz"
+                className="mh-input"
+                value={timezone}
+                onChange={(e) => {
+                  setTimezone(e.target.value);
+                  setTzSource("browser");
+                }}
+              />
+              <p className="mt-1 text-xs text-ink-muted">
+                {tzSource === "configured"
+                  ? `Using configured demo/deploy zone ${timezone}. Change if your window is elsewhere.`
+                  : `Using your browser zone (${timezone}). Times above are interpreted here.`}
+              </p>
+            </div>
+            <div>
+              <label className="mh-label" htmlFor="impact">
+                Impact
+              </label>
+              <input
+                id="impact"
+                className="mh-input"
+                value={impact}
+                onChange={(e) => setImpact(e.target.value)}
+                placeholder="e.g. Brief read-only window"
+              />
+            </div>
+            <button
+              type="button"
+              className="text-sm font-medium text-accent underline"
+              onClick={() => setShowMore((v) => !v)}
+              aria-expanded={showMore}
+            >
+              {showMore ? "Hide more options" : "More options"}
+            </button>
+            {showMore && (
+              <div className="space-y-4 rounded-lg border border-ink-200 bg-surface/50 p-3">
+                <div>
+                  <label className="mh-label" htmlFor="desc">
+                    Message (optional)
+                  </label>
+                  <textarea
+                    id="desc"
+                    className="mh-input"
+                    rows={3}
+                    value={description}
+                    onChange={(e) => setDescription(e.target.value)}
+                    placeholder="Extra context for subscribers"
+                  />
+                </div>
+                {kind === "planned_maintenance" && can("recurrence_editor") && (
+                  <>
+                    <RecurrenceEditor
+                      enabled={recurring}
+                      onEnabledChange={setRecurring}
+                      value={recurrence}
+                      onChange={setRecurrence}
+                      startsAt={starts}
+                      endsAt={ends}
+                      timezone={timezone}
+                    />
+                    {recurring && (
+                      <p className="text-xs text-ink-muted">
+                        Series defaults apply to each occurrence. Overrides are edited after publish.
+                      </p>
+                    )}
+                  </>
+                )}
+                {!quick && can("impact_analysis") && (
+                  <p className="text-xs text-ink-muted">
+                    Shared infrastructure impact analysis is available on the next step after details.
+                  </p>
+                )}
+                <fieldset className="rounded-lg border border-dashed border-ink-200 p-3">
+                  <legend className="px-1 text-xs font-semibold tracking-wide text-ink-muted">
+                    Optional second app
+                  </legend>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <select
+                      className="mh-input"
+                      value={appId2}
+                      onChange={(e) => setAppId2(e.target.value)}
+                    >
+                      <option value="">None</option>
+                      {apps.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name.replace("[DEMO] ", "")}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="mh-input"
+                      value={envId2}
+                      onChange={(e) => setEnvId2(e.target.value)}
+                    >
+                      <option value="">—</option>
+                      {envs.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.key}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </fieldset>
+              </div>
+            )}
 
             {error && (
               <p
@@ -590,7 +700,7 @@ export function EventCreatePage() {
               </p>
             )}
             <button className="mh-btn" type="submit">
-              Continue to impact analysis
+              {useImpactFlow ? "Continue to impact analysis" : "Continue to review"}
             </button>
           </form>
         )}
@@ -745,16 +855,21 @@ export function EventCreatePage() {
               </p>
             )}
             <div className="flex flex-wrap gap-2">
-              <button type="button" className="mh-btn-ghost" onClick={() => setStep("audience")} disabled={busy}>
+              <button
+                type="button"
+                className="mh-btn-ghost"
+                onClick={() => setStep(useImpactFlow ? "audience" : "details")}
+                disabled={busy}
+              >
                 Back
               </button>
               <button
                 type="button"
                 className="mh-btn"
-                onClick={() => void onPublish()}
-                disabled={!canPublish}
+                onClick={() => void (useImpactFlow ? onPublish() : onSimplePublish())}
+                disabled={useImpactFlow ? !canPublish : busy}
               >
-                {busy ? "Publishing…" : "Confirm impacts & publish"}
+                {busy ? "Publishing…" : useImpactFlow ? "Confirm & publish" : "Publish"}
               </button>
             </div>
           </div>

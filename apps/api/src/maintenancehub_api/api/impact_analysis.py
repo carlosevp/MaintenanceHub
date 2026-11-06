@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from maintenancehub_api.api.events import _to_out
+from maintenancehub_api.api.experience import require_capability
 from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, require_roles
 from maintenancehub_api.domain import events as event_service
@@ -32,6 +33,7 @@ def preview_impact(
     Viewers are rejected. Destination addresses are included only for authorized
     publishers (counts always returned).
     """
+    require_capability("impact_analysis")
     if body.ends_at <= body.starts_at:
         raise HTTPException(status_code=400, detail="ends_at must be after starts_at")
     seeds = impacts_from_dicts([s.model_dump() for s in body.seeds])
@@ -74,6 +76,7 @@ def confirm_impact(
     Downstream includes must appear in calculated suggestions. Manual adds require
     catalog validity + grants. Notify downstream ≠ assert those apps unavailable.
     """
+    require_capability("impact_analysis")
     event = event_service.get_event(db, event_id)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")

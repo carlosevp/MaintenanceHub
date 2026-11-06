@@ -37,6 +37,7 @@ Legend: **F** = fully functional · **P** = partially functional · **S** = stub
 | **M14 Impact analysis** | **F** | Prior harden | Prior | Publish flow |
 | **M15 Admin workspace** | **F** | `admin_workspace` + UI shell | `test_admin_workspace` + AdminShell vitest | `/admin/*` |
 | **M16 Consumer/publisher UX** | **F** | status_pages + dashboard/calendar slices + wizard/subs UI | `test_m16_consumer_publisher` | My Applications, Calendar agenda, Publish wizard, Status, Subscriptions |
+| **M17 UX redesign / profiles** | **F** | experience registry + token theme + Overview/Alerts IA | `test_m17_experience` | Overview, Calendar, My Alerts, Schedule CTA, Admin gated |
 | Monitoring / Teams APIs | **M** (non-goal) | Absent | — | About/LIMITATIONS |
 
 \*Improved in M15.

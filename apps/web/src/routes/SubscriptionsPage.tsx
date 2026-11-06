@@ -183,11 +183,11 @@ export function SubscriptionsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-3xl font-semibold text-ink-950">Subscriptions & calendar</h1>
-        <p className="mt-1 text-sm text-ink-600">
-          Subscribe to applications, app+environment pairs, or a single event. Matching reuses
-          effective confirmed impacts (including downstream). Multiple subscriptions to the same
-          destination are deduplicated per delivery — you receive one message per reminder slot.
+        <p className="mh-eyebrow">Consumer</p>
+        <h1 className="font-display text-3xl font-semibold text-ink">My Alerts</h1>
+        <p className="mt-1 text-sm text-ink-muted">
+          Choose which apps and environments to hear about. You get one message per reminder time —
+          duplicates are deduplicated automatically. No integration jargon required.
         </p>
       </div>
 
@@ -200,7 +200,7 @@ export function SubscriptionsPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <section className="mh-panel p-5" aria-labelledby="subs-list">
           <h2 id="subs-list" className="font-display text-xl font-semibold">
-            Your subscriptions
+            Active alerts
           </h2>
           {subs.length === 0 ? (
             <p className="mt-3 text-sm text-ink-500">None yet.</p>
@@ -248,7 +248,7 @@ export function SubscriptionsPage() {
 
         <section className="mh-panel p-5" aria-labelledby="subs-create">
           <h2 id="subs-create" className="font-display text-xl font-semibold">
-            Create subscription
+            Add an alert
           </h2>
           <form className="mt-4 space-y-3" onSubmit={onCreate}>
             <div>

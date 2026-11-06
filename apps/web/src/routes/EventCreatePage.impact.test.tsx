@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ExperienceProvider } from "@/features/experience/ExperienceContext";
 import { EventCreatePage } from "./EventCreatePage";
 
 const impactPreview = vi.fn();
@@ -82,6 +83,21 @@ describe("EventCreatePage impact analysis stability", () => {
     createEvent.mockReset();
     impactConfirm.mockReset();
     impactPreview.mockImplementation(async () => previewPayload(`tok-${impactPreview.mock.calls.length}`));
+    // Team+ profile so impact flow is available (Essentials fail-closed defaults otherwise)
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        profile: "team",
+        label: "Team",
+        capabilities: {
+          impact_analysis: true,
+          recurrence_editor: true,
+          quick_publish: true,
+          demo_scenarios: true,
+        },
+        scenarios: [],
+      }),
+    } as Response);
   });
 
   afterEach(() => {
@@ -92,15 +108,17 @@ describe("EventCreatePage impact analysis stability", () => {
     const user = userEvent.setup();
     render(
       <MemoryRouter>
-        <EventCreatePage />
+        <ExperienceProvider>
+          <EventCreatePage />
+        </ExperienceProvider>
       </MemoryRouter>,
     );
 
-    await waitFor(() => expect(screen.getByLabelText(/Target type/i)).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByLabelText(/^Target$/i)).toBeInTheDocument());
 
-    await user.type(screen.getByLabelText(/^Title$/i), "Oracle window");
-    const starts = screen.getByLabelText(/Starts/i);
-    const ends = screen.getByLabelText(/Ends/i);
+    await user.type(screen.getByLabelText(/^What$/i), "Oracle window");
+    const starts = screen.getByLabelText(/^Starts$/i);
+    const ends = screen.getByLabelText(/^Ends$/i);
     await user.clear(starts);
     await user.type(starts, "2026-07-01T02:00");
     await user.clear(ends);

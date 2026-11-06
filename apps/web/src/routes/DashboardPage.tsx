@@ -6,108 +6,99 @@ import {
   type DashboardSummary,
   type MaintenanceEvent,
 } from "@/api/client";
-import { ApprovalBadge, KindBadge, StatusBadge } from "@/components/StatusBadge";
+import { PrimaryStatusBadge } from "@/components/StatusBadge";
 import { fmtRange, untilBack } from "@/lib/format";
+import { useAuth } from "@/features/auth/AuthContext";
+import { ScenarioSelector } from "@/components/ScenarioSelector";
+import { useExperience } from "@/features/experience/ExperienceContext";
+import clsx from "clsx";
 
-function EventRow({ event }: { event: MaintenanceEvent }) {
-  const statusHref = `/status/events/${event.id}`;
+const UPCOMING_PREVIEW = 5;
+
+function cleanTitle(title: string) {
+  return title.replace("[DEMO] ", "");
+}
+
+function EventRow({
+  event,
+  compact,
+}: {
+  event: MaintenanceEvent;
+  compact?: boolean;
+}) {
+  const active =
+    event.status === "in_progress" ||
+    event.status === "extended" ||
+    event.status === "verifying";
+  const isOutage = event.kind === "manual_outage" || event.status === "extended";
+
   return (
-    <li className="animate-rise border-b border-ink-100 py-4 last:border-0">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <li
+      className={clsx(
+        "border-b border-ink-200 last:border-0",
+        compact ? "py-3" : "py-4",
+      )}
+    >
+      <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <Link
-            to={`/events/${event.id}`}
-            className="font-semibold text-ink-950 hover:text-accent-strong hover:underline"
-          >
-            {event.title}
-          </Link>
-          <p className="mt-1 text-sm text-ink-600">{fmtRange(event.starts_at, event.ends_at)}</p>
-          {event.expected_impact && (
-            <p className="mt-1 text-sm text-ink-700">
-              <span className="font-medium">Impact:</span> {event.expected_impact}
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <Link
+              to={`/events/${event.id}`}
+              className="truncate font-semibold text-ink hover:underline"
+              title={cleanTitle(event.title)}
+            >
+              {cleanTitle(event.title)}
+            </Link>
+            <PrimaryStatusBadge
+              status={event.status}
+              approvalState={event.approval_state}
+              kind={event.kind}
+            />
+          </div>
+          <p className="mt-1 truncate text-sm text-ink-muted">
+            {fmtRange(event.starts_at, event.ends_at, event.timezone)}
+          </p>
+          {!compact && event.expected_impact && (
+            <p className="mt-1 line-clamp-2 text-sm text-ink">
+              <span className="font-medium text-ink-muted">Impact: </span>
+              {event.expected_impact}
             </p>
           )}
-          {(event.status === "in_progress" ||
-            event.status === "extended" ||
-            event.status === "verifying") && (
-            <p className="mt-1 text-sm font-medium text-warn">{untilBack(event.ends_at)}</p>
+          {active && (
+            <p
+              className={clsx(
+                "mt-1 text-sm font-medium",
+                isOutage ? "text-danger" : "text-warn",
+              )}
+            >
+              {untilBack(event.ends_at)}
+            </p>
           )}
-          <p className="mt-1 text-xs text-ink-500">
-            <Link to={statusHref} className="underline hover:text-accent">
-              Shareable status
-            </Link>
-            {event.approval_state === "approved_window" && (
-              <span className="ml-2 text-amber-800">· approved window (not confirmed)</span>
-            )}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <KindBadge kind={event.kind} />
-          <StatusBadge status={event.status} />
-          <ApprovalBadge state={event.approval_state} />
         </div>
       </div>
     </li>
   );
 }
 
-function Section({
-  title,
-  subtitle,
-  count,
-  items,
-  empty,
-}: {
-  title: string;
-  subtitle: string;
-  count: number;
-  items: MaintenanceEvent[];
-  empty: string;
-}) {
-  return (
-    <section className="mh-panel p-5" aria-labelledby={`sec-${title}`}>
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <h2 id={`sec-${title}`} className="font-display text-xl font-semibold text-ink-950">
-            {title}
-          </h2>
-          <p className="text-sm text-ink-500">{subtitle}</p>
-        </div>
-        <span
-          className="rounded-full bg-ink-100 px-2.5 py-1 text-xs font-semibold text-ink-700"
-          aria-label={`${count} items`}
-        >
-          {count}
-        </span>
-      </div>
-      {items.length === 0 ? (
-        <p className="mt-6 text-sm text-ink-500">{empty}</p>
-      ) : (
-        <ul className="mt-2">{items.map((e) => <EventRow key={`${e.id}-${e.occurrence_starts_at || ""}`} event={e} />)}</ul>
-      )}
-    </section>
-  );
-}
-
 export function DashboardPage() {
+  const { user } = useAuth();
+  const { activeScenario } = useExperience();
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
   const [apps, setApps] = useState<Application[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [appFilter, setAppFilter] = useState("");
-  const [kindFilter, setKindFilter] = useState("");
   const [search, setSearch] = useState("");
-  const [favoritesOnly, setFavoritesOnly] = useState(true);
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [showAllUpcoming, setShowAllUpcoming] = useState(false);
+  const [showMore, setShowMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const params = useMemo(() => {
     const p = new URLSearchParams();
-    if (appFilter) p.set("application_id", appFilter);
-    if (kindFilter) p.set("kind", kindFilter);
     if (favoritesOnly) p.set("favorites_only", "true");
     if (search.trim()) p.set("q", search.trim());
     return p;
-  }, [appFilter, kindFilter, favoritesOnly, search]);
+  }, [favoritesOnly, search]);
 
   useEffect(() => {
     let cancelled = false;
@@ -144,188 +135,234 @@ export function DashboardPage() {
     setFavorites(saved.application_ids);
   }
 
-  const favApps = apps.filter((a) => favorites.includes(a.id));
+  const nowItems = [
+    ...(summary?.current.items ?? []),
+    ...(summary?.outages.items ?? []).filter(
+      (o) => !(summary?.current.items ?? []).some((c) => c.id === o.id),
+    ),
+  ];
+
+  const upcomingAll = summary?.upcoming.items ?? [];
+  const upcomingVisible = showAllUpcoming
+    ? upcomingAll
+    : upcomingAll.slice(0, UPCOMING_PREVIEW);
+  const upcomingHidden = Math.max(0, upcomingAll.length - UPCOMING_PREVIEW);
 
   return (
-    <div className="space-y-6">
-      <div className="animate-rise">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Consumer home</p>
-        <h1 className="font-display text-3xl font-semibold text-ink-950">My Applications</h1>
-        <p className="mt-2 max-w-3xl text-ink-600">
-          Personalized view of favorites, active confirmed work, extensions, cancellations, and
-          upcoming windows. Status is never inferred from the calendar window alone — executing
-          requires confirmed communication and a human-published lifecycle state.
+    <div className="space-y-5 md:space-y-6">
+      <header className="animate-rise max-w-2xl">
+        <p className="mh-eyebrow">Overview</p>
+        <h1 className="font-display text-3xl font-semibold tracking-tight text-ink sm:text-4xl">
+          What’s happening
+        </h1>
+        <p className="mt-2 text-sm text-ink-muted sm:text-base">
+          Active confirmed work, then what’s next. Status is never guessed from a calendar window
+          alone.
         </p>
-      </div>
+        {activeScenario && (
+          <p className="mt-3 rounded-md bg-accent-soft px-3 py-2 text-sm text-ink" role="status">
+            Story: <strong>{activeScenario.label}</strong> — {activeScenario.summary}
+          </p>
+        )}
+      </header>
 
-      <div className="mh-panel flex flex-wrap items-end gap-3 p-4">
-        <div className="min-w-[12rem] flex-1">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+        <div className="min-w-0 flex-1 sm:min-w-[16rem]">
           <label className="mh-label" htmlFor="search">
             Search
           </label>
           <input
             id="search"
             className="mh-input"
-            placeholder="Title or impact…"
+            placeholder="Title or what’s affected…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <div className="min-w-[12rem] flex-1">
-          <label className="mh-label" htmlFor="app-filter">
-            Application
+        {favorites.length > 0 && (
+          <label className="flex items-center gap-2 pb-2 text-sm font-medium text-ink">
+            <input
+              type="checkbox"
+              checked={favoritesOnly}
+              onChange={(e) => setFavoritesOnly(e.target.checked)}
+            />
+            My apps only
           </label>
-          <select
-            id="app-filter"
-            className="mh-input"
-            value={appFilter}
-            onChange={(e) => setAppFilter(e.target.value)}
-          >
-            <option value="">All applications</option>
-            {apps.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
+        )}
+        <div className="flex gap-2 pb-0.5">
+          <Link to="/calendar" className="mh-btn-ghost">
+            Calendar
+          </Link>
+          <Link to="/alerts" className="mh-btn-ghost">
+            My Alerts
+          </Link>
         </div>
-        <div className="min-w-[10rem]">
-          <label className="mh-label" htmlFor="kind-filter">
-            Kind
-          </label>
-          <select
-            id="kind-filter"
-            className="mh-input"
-            value={kindFilter}
-            onChange={(e) => setKindFilter(e.target.value)}
-          >
-            <option value="">All kinds</option>
-            <option value="planned_maintenance">Planned maintenance</option>
-            <option value="manual_outage">Manual outage</option>
-          </select>
-        </div>
-        <label className="mb-2 flex items-center gap-2 text-sm font-medium text-ink-700">
-          <input
-            type="checkbox"
-            checked={favoritesOnly}
-            onChange={(e) => setFavoritesOnly(e.target.checked)}
-          />
-          Favorites only
-        </label>
-        <Link to="/subscriptions" className="mh-btn-ghost mb-0.5">
-          Manage subscriptions
-        </Link>
-        <Link to="/events/new?kind=manual_outage&quick=1" className="mh-btn-ghost mb-0.5">
-          Quick outage
-        </Link>
-        <Link to="/events/new" className="mh-btn mb-0.5">
-          Publish maintenance
-        </Link>
       </div>
 
-      <section className="mh-panel p-5" aria-labelledby="my-apps-heading">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 id="my-apps-heading" className="font-display text-xl font-semibold">
-              Favorite applications
-            </h2>
-            <p className="text-sm text-ink-500">
-              Star apps to personalize this homepage. Open a shareable status page per app.
-            </p>
-          </div>
-        </div>
-        <div className="mt-4 flex flex-wrap gap-2" aria-label="Favorite applications">
+      <details className="group text-sm">
+        <summary className="cursor-pointer list-none text-ink-muted hover:text-ink focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden">
+          Manage starred apps
+          <span className="ml-2 text-ink-faint">({favorites.length})</span>
+        </summary>
+        <div className="mt-3 flex flex-wrap gap-2">
           {apps.map((a) => {
             const fav = favorites.includes(a.id);
             return (
-              <div key={a.id} className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className={
-                    fav
-                      ? "rounded-full border border-accent bg-accent-soft px-3 py-1 text-xs font-semibold text-accent-strong"
-                      : "rounded-full border border-ink-200 bg-white px-3 py-1 text-xs font-medium text-ink-600 hover:bg-ink-50"
-                  }
-                  aria-pressed={fav}
-                  onClick={() => void toggleFavorite(a.id)}
-                >
-                  {fav ? "★" : "☆"} {a.name.replace("[DEMO] ", "")}
-                </button>
-                {fav && (
-                  <Link
-                    to={`/status/apps/${a.key}`}
-                    className="rounded-full border border-ink-200 px-2 py-1 text-xs text-ink-600 hover:bg-ink-50"
-                  >
-                    Status
-                  </Link>
-                )}
-              </div>
+              <button
+                key={a.id}
+                type="button"
+                className={
+                  fav
+                    ? "rounded-md border border-accent bg-accent-soft px-2.5 py-1 text-xs font-semibold text-ink"
+                    : "rounded-md border border-ink-200 px-2.5 py-1 text-xs font-medium text-ink-muted hover:bg-accent-soft"
+                }
+                aria-pressed={fav}
+                aria-label={`${fav ? "Unstar" : "Star"} ${cleanTitle(a.name)}`}
+                onClick={() => void toggleFavorite(a.id)}
+              >
+                {fav ? "★" : "☆"} {cleanTitle(a.name)}
+              </button>
             );
           })}
         </div>
-        {favoritesOnly && favApps.length === 0 && (
-          <p className="mt-3 text-sm text-amber-800" role="status">
-            No favorites yet — uncheck “Favorites only” or star applications above.
-          </p>
-        )}
-      </section>
+      </details>
 
-      {loading && <p className="text-sm text-ink-500">Loading My Applications…</p>}
+      {loading && <p className="text-sm text-ink-muted">Loading overview…</p>}
       {error && (
-        <p className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
+        <p
+          className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger"
+          role="alert"
+        >
           {error}
         </p>
       )}
 
       {summary && !loading && (
-        <>
-          <p className="text-xs text-ink-500">{summary.note || ""}</p>
-          <div className="grid gap-4 lg:grid-cols-2">
-            <Section
-              title="Currently impacting"
-              subtitle="Confirmed + human-published executing right now"
-              count={summary.current.count}
-              items={summary.current.items}
-              empty="Nothing is currently in an active confirmed maintenance or outage."
-            />
-            <Section
-              title="Active outages"
-              subtitle="Manually reported — distinct from planned work"
-              count={summary.outages.count}
-              items={summary.outages.items}
-              empty="No open manual outages."
-            />
-            <Section
-              title="Extensions"
-              subtitle="Windows currently marked extended"
-              count={summary.extended?.count ?? 0}
-              items={summary.extended?.items ?? []}
-              empty="No active extensions."
-            />
-            <Section
-              title="Recent cancellations"
-              subtitle="Last 14 days"
-              count={summary.cancelled?.count ?? 0}
-              items={summary.cancelled?.items ?? []}
-              empty="No recent cancellations."
-            />
-            <Section
-              title="Upcoming"
-              subtitle="Confirmed or approved windows still scheduled"
-              count={summary.upcoming.count}
-              items={summary.upcoming.items}
-              empty="No upcoming maintenance in this filter."
-            />
-            <Section
-              title="Recently completed"
-              subtitle="Last 14 days"
-              count={summary.recent.count}
-              items={summary.recent.items}
-              empty="No recent completions."
-            />
-          </div>
-        </>
+        <div className="space-y-5">
+          {/* Compact current strip — not an equal-height twin column */}
+          <section
+            aria-labelledby="sec-now"
+            className={clsx(
+              nowItems.length === 0
+                ? "rounded-lg border border-dashed border-ink-200 px-4 py-3"
+                : "mh-panel px-4 py-3 sm:px-5",
+              nowItems.some((e) => e.kind === "manual_outage") && "ring-1 ring-danger/25",
+            )}
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 id="sec-now" className="font-display text-lg font-semibold text-ink">
+                Happening now
+              </h2>
+              {nowItems.length > 0 && (
+                <span className="text-xs font-medium text-ink-muted">{nowItems.length} active</span>
+              )}
+            </div>
+            {nowItems.length === 0 ? (
+              <p className="mt-1 text-sm text-ink-muted">Nothing active right now.</p>
+            ) : (
+              <ul className="mt-1">
+                {nowItems.map((e) => (
+                  <EventRow
+                    key={`now-${e.id}-${e.occurrence_starts_at || ""}`}
+                    event={e}
+                    compact
+                  />
+                ))}
+              </ul>
+            )}
+          </section>
+
+          {/* Full-width upcoming list */}
+          <section aria-labelledby="sec-upcoming" className="mh-panel px-4 py-4 sm:px-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <div>
+                <h2 id="sec-upcoming" className="font-display text-xl font-semibold text-ink">
+                  Coming up
+                </h2>
+                <p className="text-sm text-ink-muted">Confirmed or planned windows still scheduled</p>
+              </div>
+              <Link to="/calendar" className="text-sm font-medium text-accent hover:underline">
+                View calendar
+              </Link>
+            </div>
+            {upcomingAll.length === 0 ? (
+              <p className="mt-4 text-sm text-ink-muted">No upcoming windows for this filter.</p>
+            ) : (
+              <>
+                <ul className="mt-2">
+                  {upcomingVisible.map((e) => (
+                    <EventRow
+                      key={`up-${e.id}-${e.occurrence_starts_at || ""}`}
+                      event={e}
+                    />
+                  ))}
+                </ul>
+                {!showAllUpcoming && upcomingHidden > 0 && (
+                  <button
+                    type="button"
+                    className="mt-3 text-sm font-medium text-accent hover:underline"
+                    onClick={() => setShowAllUpcoming(true)}
+                  >
+                    View all {upcomingAll.length} upcoming
+                  </button>
+                )}
+                {showAllUpcoming && upcomingHidden > 0 && (
+                  <button
+                    type="button"
+                    className="mt-3 text-sm font-medium text-ink-muted hover:underline"
+                    onClick={() => setShowAllUpcoming(false)}
+                  >
+                    Show fewer
+                  </button>
+                )}
+              </>
+            )}
+          </section>
+
+          {(summary.extended?.count || summary.cancelled?.count || summary.recent.count > 0) && (
+            <div>
+              <button
+                type="button"
+                className="text-sm font-medium text-ink-muted underline hover:text-ink"
+                onClick={() => setShowMore((v) => !v)}
+                aria-expanded={showMore}
+              >
+                {showMore ? "Hide recent history" : "Extensions, cancellations & recent"}
+              </button>
+              {showMore && (
+                <div className="mt-3 space-y-3">
+                  {(summary.extended?.items ?? []).map((e) => (
+                    <div key={`ex-${e.id}`} className="rounded-md border border-ink-200 px-3 py-2">
+                      <EventRow event={e} compact />
+                    </div>
+                  ))}
+                  {(summary.cancelled?.items ?? []).slice(0, 4).map((e) => (
+                    <div key={`ca-${e.id}`} className="rounded-md border border-ink-200 px-3 py-2">
+                      <EventRow event={e} compact />
+                    </div>
+                  ))}
+                  {summary.recent.items.slice(0, 4).map((e) => (
+                    <div key={`re-${e.id}`} className="rounded-md border border-ink-200 px-3 py-2">
+                      <EventRow event={e} compact />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
+
+      {user?.roles.includes("publisher") && (
+        <p className="text-sm text-ink-muted">
+          Publishing?{" "}
+          <Link to="/events/new?quick=1" className="font-medium text-accent underline">
+            Schedule maintenance
+          </Link>
+        </p>
+      )}
+
+      <ScenarioSelector />
     </div>
   );
 }
