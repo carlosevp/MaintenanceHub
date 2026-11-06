@@ -1,14 +1,14 @@
 # MaintenanceHub implementation audit
 
-**Branch audited:** `cursor/m15-admin-workspace-04a5` (M15 Enterprise Administration Workspace + finalize harden on PR #10; base hardened PR #9 / `cursor/m14-impact-preview-6e6d` @ `7de5b50`)  
+**Branch audited:** `cursor/m16-consumer-publisher-932e` (M16 Consumer & Publisher Experience; base hardened PR #10 / `cursor/m15-admin-workspace-04a5` @ `c77f5b4`)  
 **Sources of truth:** Project store product-brief / PRD / ADRs / data-model / api-contracts / milestone-plan; repo `docs/LIMITATIONS.md`, `docs/administration.md`; actual source (not class existence alone).  
 **Date:** 2026-11-06
 
 ## Executive summary
 
-MaintenanceHub delivers a working **communication** stack for planned maintenance and manual outages (catalog → schedule → dashboard/calendar → subscriptions/SMTP/bridge → ICS → SN poll/CSV → banner → M3b recurrence → sparse occurrence lifecycle → M14 impact analysis → **M15 Administration workspace**). It is **not** a monitoring product.
+MaintenanceHub delivers a working **communication** stack for planned maintenance and manual outages (catalog → schedule → dashboard/calendar → subscriptions/SMTP/bridge → ICS → SN poll/CSV → banner → M3b recurrence → sparse occurrence lifecycle → M14 impact analysis → M15 Administration workspace → **M16 Consumer & Publisher Experience**). It is **not** a monitoring product.
 
-**M15** adds a polished `/admin` UI gated by `platform_administrator` in the **API**. Finalize harden covers: full admin GET RBAC matrix vs publishers; service-cred one-time secret / rotate / revoke / audit redaction; concurrent-safe job retry (`FOR UPDATE`) with UNCERTAIN SMTP hand-off refusal; SN dry-run vs poll; non-destructive CSV (`absences_deleted: 0`); job/audit/delivery `limit`+`offset` + indexes; secrets-status `runtime_editable` vs `deployment_only`; catalog dependency writes require application grants for non-admins.
+**M16** personalizes the consumer homepage (**My Applications**), adds calendar agenda/filters, a four-step publisher wizard with drafts/templates/Quick Publish, richer subscription targeting (`app_environment`, multi-reminders), clearer notification templates, and authenticated shareable status URLs. Confirmed≠approved semantics and impact-revision safety from M14 are preserved.
 
 ---
 
@@ -36,6 +36,7 @@ Legend: **F** = fully functional · **P** = partially functional · **S** = stub
 | Public banner | **F** | Prior | Prior | Banner demo |
 | **M14 Impact analysis** | **F** | Prior harden | Prior | Publish flow |
 | **M15 Admin workspace** | **F** | `admin_workspace` + UI shell | `test_admin_workspace` + AdminShell vitest | `/admin/*` |
+| **M16 Consumer/publisher UX** | **F** | status_pages + dashboard/calendar slices + wizard/subs UI | `test_m16_consumer_publisher` | My Applications, Calendar agenda, Publish wizard, Status, Subscriptions |
 | Monitoring / Teams APIs | **M** (non-goal) | Absent | — | About/LIMITATIONS |
 
 \*Improved in M15.
@@ -61,15 +62,17 @@ See [administration.md](./administration.md). **UI/API:** deps, infra create, CS
 
 ---
 
-## Functional demo checklist (M15)
+## Functional demo checklist (M16)
 
 | Check | Command / action | Result |
 |-------|------------------|--------|
-| Full pytest (+ Postgres when available) | `make test` / `pytest tests -q` | **134 passed** |
-| Web vitest + production build | `cd apps/web && npm test && npm run build` | **16 passed**, build OK |
-| Lint | `make lint` | **All checks passed** |
-| Admin demo | Login `admin@demo.example.com` / `password123` → **Admin** nav | Workspace sections load; publisher denied by API |
-| M15 finalize | RBAC matrix, creds, uncertain retry, CSV absence policy, pagination | `test_admin_workspace_harden.py` |
+| Full pytest (+ Postgres when available) | `make test` / `pytest tests -q` | See M16 delivery |
+| Web vitest + production build | `cd apps/web && npm test && npm run build` | See M16 delivery |
+| Lint | `make lint` | See M16 delivery |
+| My Applications | Login viewer → homepage favorites + extensions/cancels | Journeys A/I |
+| Publisher wizard | `/events/new` four steps + Quick Publish | Journeys C/D |
+| Status URLs | `/status/apps/{key}` / events / scheduled | Journey H |
+| Admin still gated | Publisher blocked from `/admin` APIs | Journey J |
 
 Local: `make install && make migrate && make api` / `make worker` / `make web`.  
 Compose: `make compose-up` → http://localhost:8080.

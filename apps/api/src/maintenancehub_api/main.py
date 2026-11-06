@@ -25,6 +25,7 @@ from maintenancehub_api.api import (
     health,
     impact_analysis,
     notifications,
+    status_pages,
     subscriptions,
 )
 from maintenancehub_api.config import get_settings
@@ -128,6 +129,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_integrations.router, prefix="/api/v1")
     app.include_router(admin_workspace.router, prefix="/api/v1")
     app.include_router(banner.router, prefix="/api/v1")
+    app.include_router(status_pages.router, prefix="/api/v1")
     app.include_router(calendar_tokens.router, prefix="/api/v1")
 
     return app

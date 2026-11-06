@@ -12,7 +12,11 @@ from sqlalchemy.orm import Session, joinedload
 from maintenancehub_api.adapters.bridge import get_bridge_adapter, render_bridge_subject
 from maintenancehub_api.adapters.smtp import get_smtp_adapter
 from maintenancehub_api.config import get_settings
-from maintenancehub_api.domain.templates import DEFAULT_TEMPLATES, render_template
+from maintenancehub_api.domain.templates import (
+    DEFAULT_TEMPLATES,
+    approval_label,
+    render_template,
+)
 from maintenancehub_api.models import (
     ApprovalState,
     DeliveryStatus,
@@ -58,20 +62,24 @@ def get_template(db: Session, key: str) -> tuple[str, str]:
 
 
 def event_context(event: MaintenanceEvent, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    approval = (
+        event.approval_state.value
+        if hasattr(event.approval_state, "value")
+        else str(event.approval_state)
+    )
+    base = get_settings().public_base_url.rstrip("/")
     ctx = {
         "event_id": event.id,
         "title": event.title,
         "kind": event.kind.value if hasattr(event.kind, "value") else event.kind,
         "status": event.status.value if hasattr(event.status, "value") else event.status,
-        "approval_state": (
-            event.approval_state.value
-            if hasattr(event.approval_state, "value")
-            else event.approval_state
-        ),
+        "approval_state": approval,
+        "approval_label": approval_label(approval),
         "starts_at": event.starts_at.isoformat() if event.starts_at else "",
         "ends_at": event.ends_at.isoformat() if event.ends_at else "",
         "timezone": event.timezone,
         "expected_impact": event.expected_impact or "",
+        "detail_url": f"{base}/events/{event.id}",
         "from_status": "",
         "previous_ends_at": "",
         "note": "",
@@ -80,6 +88,29 @@ def event_context(event: MaintenanceEvent, extra: dict[str, Any] | None = None) 
     if extra:
         ctx.update(extra)
     return ctx
+
+
+def refresh_default_templates(db: Session, *, force: bool = False) -> int:
+    """Create missing templates; optionally overwrite bodies from DEFAULT_TEMPLATES (seed)."""
+    n = 0
+    for key, parts in DEFAULT_TEMPLATES.items():
+        existing = db.query(NotificationTemplate).filter(NotificationTemplate.key == key).first()
+        if not existing:
+            db.add(
+                NotificationTemplate(
+                    key=key,
+                    channel="smtp",
+                    subject_template=parts["subject"],
+                    body_template=parts["body"],
+                )
+            )
+            n += 1
+        elif force:
+            existing.subject_template = parts["subject"]
+            existing.body_template = parts["body"]
+            n += 1
+    db.commit()
+    return n
 
 
 def _subscription_matches_impacts(

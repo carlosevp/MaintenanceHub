@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from maintenancehub_api.auth.security import hash_password
 from maintenancehub_api.domain import events as event_service
-from maintenancehub_api.domain.notifications import ensure_default_templates
+from maintenancehub_api.domain.notifications import ensure_default_templates, refresh_default_templates
 from maintenancehub_api.domain.authz import grant_user_on_application
 from maintenancehub_api.models import (
     AppEnvironment,
@@ -45,6 +45,9 @@ SEED_USERS = [
 
 
 def seed_demo(db: Session) -> None:
+    ensure_default_templates(db)
+    refresh_default_templates(db, force=True)
+
     # Roles
     roles: dict[RoleName, Role] = {}
     for name in RoleName:
@@ -414,7 +417,7 @@ def seed_demo(db: Session) -> None:
     )
 
     # Manual outage
-    event_service.create_event(
+    outage = event_service.create_event(
         db,
         data={
             "kind": "manual_outage",
@@ -434,6 +437,45 @@ def seed_demo(db: Session) -> None:
             ],
         },
         actor_id=publisher.id,
+    )
+    # M16 consumer slices: extension + recent cancellation on favorite apps
+    outage = event_service.get_event(db, outage.id)
+    if outage.status == EventStatus.scheduled:
+        event_service.transition_event(
+            db, outage, target_status=EventStatus.in_progress, actor_id=publisher.id, note="Started"
+        )
+        outage = event_service.get_event(db, outage.id)
+    event_service.extend_event(
+        db,
+        outage,
+        new_ends_at=now + timedelta(hours=5),
+        actor_id=publisher.id,
+        note="Extended while IdP recovery continues",
+    )
+
+    cancelled = event_service.create_event(
+        db,
+        data={
+            "kind": "planned_maintenance",
+            "title": "[DEMO] Cancelled Payments Gateway INT deploy",
+            "description": "Cancelled — conflicting change window.",
+            "expected_impact": "None (cancelled)",
+            "approval_state": "confirmed_scheduled",
+            "starts_at": now + timedelta(days=3),
+            "ends_at": now + timedelta(days=3, hours=2),
+            "timezone": "America/Chicago",
+            "impacts": [
+                {
+                    "target_type": "application",
+                    "target_id": apps["payments-gateway"].id,
+                    "environment_id": envs["INT"].id,
+                }
+            ],
+        },
+        actor_id=publisher.id,
+    )
+    event_service.cancel_event(
+        db, cancelled, actor_id=publisher.id, note="Cancelled due to conflict"
     )
 
     # Recurring weekly maintenance (M3b) — Sundays 02:00–04:00 America/Chicago

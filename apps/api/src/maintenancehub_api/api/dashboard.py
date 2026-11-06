@@ -136,6 +136,7 @@ def dashboard_summary(
     environment_id: str | None = None,
     kind: str | None = None,
     favorites_only: bool = False,
+    q: str | None = None,
     limit: int = Query(10, ge=1, le=50),
     db: Session = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
@@ -154,14 +155,41 @@ def dashboard_summary(
     )
     if base is None:
         return DashboardSummary(
-            current=empty, upcoming=empty, recent=empty, outages=empty, as_of=now
+            current=empty,
+            upcoming=empty,
+            recent=empty,
+            outages=empty,
+            extended=empty,
+            cancelled=empty,
+            as_of=now,
         )
+
+    if q:
+        like = f"%{q}%"
+        base = base.filter(
+            (MaintenanceEvent.title.ilike(like))
+            | (MaintenanceEvent.expected_impact.ilike(like))
+            | (MaintenanceEvent.description.ilike(like))
+        )
+
+    # Cancelled / completed masters for activity slices (do not treat window alone as "down")
+    cancelled_rows = (
+        base.filter(
+            MaintenanceEvent.status == EventStatus.cancelled,
+            MaintenanceEvent.updated_at >= now - timedelta(days=14),
+        )
+        .order_by(MaintenanceEvent.updated_at.desc())
+        .limit(limit)
+        .all()
+    )
+    cancelled_items = [_event_out(e, now=now) for e in cancelled_rows]
 
     candidates = base.filter(MaintenanceEvent.status != EventStatus.cancelled).all()
 
     current_items: list[EventOut] = []
     upcoming_items: list[EventOut] = []
     outage_items: list[EventOut] = []
+    extended_items: list[EventOut] = []
 
     window_start = now - timedelta(days=1)
     window_end = horizon
@@ -212,6 +240,8 @@ def dashboard_summary(
                 e, now=now, starts_at=starts, ends_at=ends, status=occ_status
             ):
                 current_items.append(item)
+                if occ_status == EventStatus.extended:
+                    extended_items.append(item)
             elif comm.is_upcoming_scheduled(
                 e, now=now, starts_at=starts, status=occ_status
             ):
@@ -220,6 +250,7 @@ def dashboard_summary(
     current_items.sort(key=lambda x: x.starts_at)
     upcoming_items.sort(key=lambda x: x.starts_at)
     outage_items.sort(key=lambda x: x.starts_at)
+    extended_items.sort(key=lambda x: x.starts_at)
 
     recent_q = base.filter(
         MaintenanceEvent.status == EventStatus.completed,
@@ -234,18 +265,23 @@ def dashboard_summary(
             count=recent_q.count(), items=[_event_out(e, now=now) for e in recent_items]
         ),
         outages=DashboardSlice(count=len(outage_items), items=outage_items[:limit]),
+        extended=DashboardSlice(count=len(extended_items), items=extended_items[:limit]),
+        cancelled=DashboardSlice(count=len(cancelled_items), items=cancelled_items[:limit]),
         as_of=now,
     )
 
 
 @router.get("/calendar/events", response_model=list[CalendarEventOut])
 def calendar_events(
-    view: str = Query("month", pattern="^(day|week|month)$"),
+    view: str = Query("month", pattern="^(day|week|month|agenda)$"),
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = None,
     application_id: str | None = None,
+    kind: str | None = None,
+    favorites_only: bool = False,
+    include_cancelled: bool = False,
     db: Session = Depends(get_db),
-    _: AuthUser = Depends(get_current_user),
+    user: AuthUser = Depends(get_current_user),
 ) -> list[CalendarEventOut]:
     now = _now()
     if from_ is None:
@@ -253,23 +289,25 @@ def calendar_events(
     if to is None:
         if view == "day":
             to = from_ + timedelta(days=1)
-        elif view == "week":
-            to = from_ + timedelta(days=7)
+        elif view in {"week", "agenda"}:
+            to = from_ + timedelta(days=7 if view == "week" else 14)
         else:
             to = from_ + timedelta(days=31)
 
-    query = _masters_query(db).filter(MaintenanceEvent.status != EventStatus.cancelled)
-    if application_id:
-        from maintenancehub_api.models import EventImpact, ImpactTargetType
-
-        query = (
-            query.join(EventImpact)
-            .filter(
-                EventImpact.target_type == ImpactTargetType.application,
-                EventImpact.target_id == application_id,
-            )
-            .distinct()
-        )
+    query = _masters_query(db)
+    if not include_cancelled:
+        query = query.filter(MaintenanceEvent.status != EventStatus.cancelled)
+    query = _apply_filters(
+        query,
+        kind=kind,
+        favorites_only=favorites_only,
+        application_id=application_id,
+        environment_id=None,
+        user=user,
+        db=db,
+    )
+    if query is None:
+        return []
 
     # Pre-filter: skip masters that cannot intersect the visible window
     events = [

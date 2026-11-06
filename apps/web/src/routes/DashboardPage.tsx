@@ -10,6 +10,7 @@ import { ApprovalBadge, KindBadge, StatusBadge } from "@/components/StatusBadge"
 import { fmtRange, untilBack } from "@/lib/format";
 
 function EventRow({ event }: { event: MaintenanceEvent }) {
+  const statusHref = `/status/events/${event.id}`;
   return (
     <li className="animate-rise border-b border-ink-100 py-4 last:border-0">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -31,6 +32,14 @@ function EventRow({ event }: { event: MaintenanceEvent }) {
             event.status === "verifying") && (
             <p className="mt-1 text-sm font-medium text-warn">{untilBack(event.ends_at)}</p>
           )}
+          <p className="mt-1 text-xs text-ink-500">
+            <Link to={statusHref} className="underline hover:text-accent">
+              Shareable status
+            </Link>
+            {event.approval_state === "approved_window" && (
+              <span className="ml-2 text-amber-800">· approved window (not confirmed)</span>
+            )}
+          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <KindBadge kind={event.kind} />
@@ -56,10 +65,12 @@ function Section({
   empty: string;
 }) {
   return (
-    <section className="mh-panel p-5">
+    <section className="mh-panel p-5" aria-labelledby={`sec-${title}`}>
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h2 className="font-display text-xl font-semibold text-ink-950">{title}</h2>
+          <h2 id={`sec-${title}`} className="font-display text-xl font-semibold text-ink-950">
+            {title}
+          </h2>
           <p className="text-sm text-ink-500">{subtitle}</p>
         </div>
         <span
@@ -72,7 +83,7 @@ function Section({
       {items.length === 0 ? (
         <p className="mt-6 text-sm text-ink-500">{empty}</p>
       ) : (
-        <ul className="mt-2">{items.map((e) => <EventRow key={e.id} event={e} />)}</ul>
+        <ul className="mt-2">{items.map((e) => <EventRow key={`${e.id}-${e.occurrence_starts_at || ""}`} event={e} />)}</ul>
       )}
     </section>
   );
@@ -84,7 +95,8 @@ export function DashboardPage() {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [appFilter, setAppFilter] = useState("");
   const [kindFilter, setKindFilter] = useState("");
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [search, setSearch] = useState("");
+  const [favoritesOnly, setFavoritesOnly] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -93,8 +105,9 @@ export function DashboardPage() {
     if (appFilter) p.set("application_id", appFilter);
     if (kindFilter) p.set("kind", kindFilter);
     if (favoritesOnly) p.set("favorites_only", "true");
+    if (search.trim()) p.set("q", search.trim());
     return p;
-  }, [appFilter, kindFilter, favoritesOnly]);
+  }, [appFilter, kindFilter, favoritesOnly, search]);
 
   useEffect(() => {
     let cancelled = false;
@@ -131,18 +144,33 @@ export function DashboardPage() {
     setFavorites(saved.application_ids);
   }
 
+  const favApps = apps.filter((a) => favorites.includes(a.id));
+
   return (
     <div className="space-y-6">
       <div className="animate-rise">
-        <h1 className="font-display text-3xl font-semibold text-ink-950">
-          What is down, scheduled, and when will it be back?
-        </h1>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-accent">Consumer home</p>
+        <h1 className="font-display text-3xl font-semibold text-ink-950">My Applications</h1>
         <p className="mt-2 max-w-3xl text-ink-600">
-          Status is communicated by people — MaintenanceHub does not probe or monitor applications.
+          Personalized view of favorites, active confirmed work, extensions, cancellations, and
+          upcoming windows. Status is never inferred from the calendar window alone — executing
+          requires confirmed communication and a human-published lifecycle state.
         </p>
       </div>
 
       <div className="mh-panel flex flex-wrap items-end gap-3 p-4">
+        <div className="min-w-[12rem] flex-1">
+          <label className="mh-label" htmlFor="search">
+            Search
+          </label>
+          <input
+            id="search"
+            className="mh-input"
+            placeholder="Title or impact…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
         <div className="min-w-[12rem] flex-1">
           <label className="mh-label" htmlFor="app-filter">
             Application
@@ -184,38 +212,65 @@ export function DashboardPage() {
           />
           Favorites only
         </label>
-        <Link to="/events/new?kind=manual_outage" className="mh-btn-ghost mb-0.5">
-          Report outage
+        <Link to="/subscriptions" className="mh-btn-ghost mb-0.5">
+          Manage subscriptions
+        </Link>
+        <Link to="/events/new?kind=manual_outage&quick=1" className="mh-btn-ghost mb-0.5">
+          Quick outage
         </Link>
         <Link to="/events/new" className="mh-btn mb-0.5">
           Publish maintenance
         </Link>
       </div>
 
-      {apps.length > 0 && (
-        <div className="flex flex-wrap gap-2" aria-label="Favorite applications">
+      <section className="mh-panel p-5" aria-labelledby="my-apps-heading">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2 id="my-apps-heading" className="font-display text-xl font-semibold">
+              Favorite applications
+            </h2>
+            <p className="text-sm text-ink-500">
+              Star apps to personalize this homepage. Open a shareable status page per app.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2" aria-label="Favorite applications">
           {apps.map((a) => {
             const fav = favorites.includes(a.id);
             return (
-              <button
-                key={a.id}
-                type="button"
-                className={
-                  fav
-                    ? "rounded-full border border-accent bg-accent-soft px-3 py-1 text-xs font-semibold text-accent-strong"
-                    : "rounded-full border border-ink-200 bg-white px-3 py-1 text-xs font-medium text-ink-600 hover:bg-ink-50"
-                }
-                aria-pressed={fav}
-                onClick={() => void toggleFavorite(a.id)}
-              >
-                {fav ? "★" : "☆"} {a.name.replace("[DEMO] ", "")}
-              </button>
+              <div key={a.id} className="flex items-center gap-1">
+                <button
+                  type="button"
+                  className={
+                    fav
+                      ? "rounded-full border border-accent bg-accent-soft px-3 py-1 text-xs font-semibold text-accent-strong"
+                      : "rounded-full border border-ink-200 bg-white px-3 py-1 text-xs font-medium text-ink-600 hover:bg-ink-50"
+                  }
+                  aria-pressed={fav}
+                  onClick={() => void toggleFavorite(a.id)}
+                >
+                  {fav ? "★" : "☆"} {a.name.replace("[DEMO] ", "")}
+                </button>
+                {fav && (
+                  <Link
+                    to={`/status/apps/${a.key}`}
+                    className="rounded-full border border-ink-200 px-2 py-1 text-xs text-ink-600 hover:bg-ink-50"
+                  >
+                    Status
+                  </Link>
+                )}
+              </div>
             );
           })}
         </div>
-      )}
+        {favoritesOnly && favApps.length === 0 && (
+          <p className="mt-3 text-sm text-amber-800" role="status">
+            No favorites yet — uncheck “Favorites only” or star applications above.
+          </p>
+        )}
+      </section>
 
-      {loading && <p className="text-sm text-ink-500">Loading dashboard…</p>}
+      {loading && <p className="text-sm text-ink-500">Loading My Applications…</p>}
       {error && (
         <p className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
           {error}
@@ -223,36 +278,53 @@ export function DashboardPage() {
       )}
 
       {summary && !loading && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Section
-            title="Currently impacting"
-            subtitle="In progress, extended, or verifying right now"
-            count={summary.current.count}
-            items={summary.current.items}
-            empty="Nothing is currently in an active maintenance or outage window."
-          />
-          <Section
-            title="Active outages"
-            subtitle="Manually reported — distinct from planned work"
-            count={summary.outages.count}
-            items={summary.outages.items}
-            empty="No open manual outages."
-          />
-          <Section
-            title="Upcoming"
-            subtitle="Confirmed or approved windows still scheduled"
-            count={summary.upcoming.count}
-            items={summary.upcoming.items}
-            empty="No upcoming maintenance in this filter."
-          />
-          <Section
-            title="Recently completed"
-            subtitle="Last 14 days"
-            count={summary.recent.count}
-            items={summary.recent.items}
-            empty="No recent completions."
-          />
-        </div>
+        <>
+          <p className="text-xs text-ink-500">{summary.note || ""}</p>
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Section
+              title="Currently impacting"
+              subtitle="Confirmed + human-published executing right now"
+              count={summary.current.count}
+              items={summary.current.items}
+              empty="Nothing is currently in an active confirmed maintenance or outage."
+            />
+            <Section
+              title="Active outages"
+              subtitle="Manually reported — distinct from planned work"
+              count={summary.outages.count}
+              items={summary.outages.items}
+              empty="No open manual outages."
+            />
+            <Section
+              title="Extensions"
+              subtitle="Windows currently marked extended"
+              count={summary.extended?.count ?? 0}
+              items={summary.extended?.items ?? []}
+              empty="No active extensions."
+            />
+            <Section
+              title="Recent cancellations"
+              subtitle="Last 14 days"
+              count={summary.cancelled?.count ?? 0}
+              items={summary.cancelled?.items ?? []}
+              empty="No recent cancellations."
+            />
+            <Section
+              title="Upcoming"
+              subtitle="Confirmed or approved windows still scheduled"
+              count={summary.upcoming.count}
+              items={summary.upcoming.items}
+              empty="No upcoming maintenance in this filter."
+            />
+            <Section
+              title="Recently completed"
+              subtitle="Last 14 days"
+              count={summary.recent.count}
+              items={summary.recent.items}
+              empty="No recent completions."
+            />
+          </div>
+        </>
       )}
     </div>
   );

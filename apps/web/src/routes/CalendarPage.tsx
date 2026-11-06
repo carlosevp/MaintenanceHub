@@ -12,18 +12,23 @@ import {
   startOfWeek,
 } from "date-fns";
 import { Link } from "react-router-dom";
-import { api, type CalendarEvent } from "@/api/client";
+import { api, type Application, type CalendarEvent } from "@/api/client";
 import { KindBadge, StatusBadge } from "@/components/StatusBadge";
 import clsx from "clsx";
 
-type View = "day" | "week" | "month";
+type View = "day" | "week" | "month" | "agenda";
 
 export function CalendarPage() {
   const [view, setView] = useState<View>("month");
   const [anchor, setAnchor] = useState(new Date());
   const [events, setEvents] = useState<CalendarEvent[]>([]);
+  const [apps, setApps] = useState<Application[]>([]);
+  const [appFilter, setAppFilter] = useState("");
+  const [kindFilter, setKindFilter] = useState("");
+  const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
   const range = useMemo(() => {
     if (view === "day") {
@@ -35,10 +40,19 @@ export function CalendarPage() {
       const from = startOfWeek(anchor, { weekStartsOn: 1 });
       return { from, to: endOfWeek(anchor, { weekStartsOn: 1 }) };
     }
+    if (view === "agenda") {
+      const from = new Date(anchor);
+      from.setHours(0, 0, 0, 0);
+      return { from, to: addDays(from, 14) };
+    }
     const from = startOfWeek(startOfMonth(anchor), { weekStartsOn: 1 });
     const to = endOfWeek(endOfMonth(anchor), { weekStartsOn: 1 });
     return { from, to };
   }, [view, anchor]);
+
+  useEffect(() => {
+    void api.applications().then(setApps).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,10 +61,13 @@ export function CalendarPage() {
       setError(null);
       try {
         const params = new URLSearchParams({
-          view,
+          view: view === "agenda" ? "agenda" : view,
           from: range.from.toISOString(),
           to: range.to.toISOString(),
         });
+        if (appFilter) params.set("application_id", appFilter);
+        if (kindFilter) params.set("kind", kindFilter);
+        if (favoritesOnly) params.set("favorites_only", "true");
         const data = await api.calendar(params);
         if (!cancelled) setEvents(data);
       } catch (err) {
@@ -62,7 +79,7 @@ export function CalendarPage() {
     return () => {
       cancelled = true;
     };
-  }, [view, range]);
+  }, [view, range, appFilter, kindFilter, favoritesOnly]);
 
   const days: Date[] = [];
   for (let d = range.from; d <= range.to; d = addDays(d, 1)) {
@@ -72,9 +89,14 @@ export function CalendarPage() {
 
   function shift(dir: -1 | 1) {
     if (view === "day") setAnchor((a) => addDays(a, dir));
-    else if (view === "week") setAnchor((a) => addDays(a, dir * 7));
+    else if (view === "week" || view === "agenda") setAnchor((a) => addDays(a, dir * (view === "agenda" ? 14 : 7)));
     else setAnchor((a) => addMonths(a, dir));
   }
+
+  const agendaEvents = useMemo(
+    () => [...events].sort((a, b) => a.starts_at.localeCompare(b.starts_at)),
+    [events],
+  );
 
   return (
     <div className="space-y-6">
@@ -82,11 +104,12 @@ export function CalendarPage() {
         <div>
           <h1 className="font-display text-3xl font-semibold text-ink-950">Maintenance calendar</h1>
           <p className="mt-1 text-sm text-ink-600">
-            Day, week, and month views with recurring occurrence expansion (IANA TZ / DST-aware).
+            Day, week, month, and agenda — same confirmed/approved semantics as My Applications.
+            Browser TZ: <code>{tz}</code>. Event rows carry their own IANA timezone.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {(["day", "week", "month"] as View[]).map((v) => (
+          {(["day", "week", "month", "agenda"] as View[]).map((v) => (
             <button
               key={v}
               type="button"
@@ -112,6 +135,53 @@ export function CalendarPage() {
         </div>
       </div>
 
+      <div className="mh-panel flex flex-wrap items-end gap-3 p-4">
+        <div className="min-w-[12rem]">
+          <label className="mh-label" htmlFor="cal-app">
+            Application
+          </label>
+          <select
+            id="cal-app"
+            className="mh-input"
+            value={appFilter}
+            onChange={(e) => setAppFilter(e.target.value)}
+          >
+            <option value="">All</option>
+            {apps.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="min-w-[10rem]">
+          <label className="mh-label" htmlFor="cal-kind">
+            Kind
+          </label>
+          <select
+            id="cal-kind"
+            className="mh-input"
+            value={kindFilter}
+            onChange={(e) => setKindFilter(e.target.value)}
+          >
+            <option value="">All</option>
+            <option value="planned_maintenance">Planned</option>
+            <option value="manual_outage">Outage</option>
+          </select>
+        </div>
+        <label className="mb-2 flex items-center gap-2 text-sm font-medium text-ink-700">
+          <input
+            type="checkbox"
+            checked={favoritesOnly}
+            onChange={(e) => setFavoritesOnly(e.target.checked)}
+          />
+          Favorites only
+        </label>
+        <p className="mb-2 text-xs text-ink-500">
+          ICS feeds refresh on client poll — not push realtime. Create tokens under Subscriptions.
+        </p>
+      </div>
+
       <p className="text-sm font-medium text-ink-700">
         {format(range.from, "MMM d, yyyy")}
         {view !== "day" ? ` – ${format(range.to, "MMM d, yyyy")}` : ""}
@@ -122,6 +192,38 @@ export function CalendarPage() {
         <p className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger" role="alert">
           {error}
         </p>
+      )}
+
+      {!loading && view === "agenda" && (
+        <ol className="mh-panel divide-y divide-ink-100">
+          {agendaEvents.length === 0 && (
+            <li className="p-6 text-sm text-ink-500">No events in this agenda window.</li>
+          )}
+          {agendaEvents.map((e) => (
+            <li key={e.id} className="flex flex-wrap items-center justify-between gap-3 p-4">
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                  {format(parseISO(e.starts_at), "EEE MMM d · HH:mm")} ({e.timezone})
+                </div>
+                <Link
+                  to={`/events/${e.id.split("@")[0]}`}
+                  className="font-medium text-ink-950 hover:underline"
+                >
+                  {e.title}
+                </Link>
+                <div className="mt-1 text-xs">
+                  <Link to={`/status/events/${e.id.split("@")[0]}`} className="text-accent underline">
+                    Status page
+                  </Link>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <KindBadge kind={e.kind} />
+                <StatusBadge status={e.status} />
+              </div>
+            </li>
+          ))}
+        </ol>
       )}
 
       {!loading && view === "month" && (
@@ -177,7 +279,7 @@ export function CalendarPage() {
         </div>
       )}
 
-      {!loading && view !== "month" && (
+      {!loading && (view === "day" || view === "week") && (
         <div className="space-y-3">
           {days.map((day) => {
             const dayEvents = events.filter((e) => {

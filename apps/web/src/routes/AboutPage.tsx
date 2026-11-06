@@ -23,11 +23,12 @@ export function AboutPage() {
           <li>Digest notification worker (subscription digest_mode is schema-ready)</li>
           <li>Live OIDC token exchange / LDAP bind until IdP endpoints are configured</li>
           <li>
-            Digest notification worker; live OIDC/LDAP until IdP configured; SN push/webhooks
+            Consumer status pages are authenticated (viewer-permitted); not anonymous public AD
+            status
           </li>
+          <li>ICS feeds refresh on client poll — not push-realtime</li>
           <li>
-            Enterprise Administration workspace is available under <code>/admin</code> (platform
-            administrators only; API-enforced)
+            Admin workspace under <code>/admin</code> (platform administrators only; API-enforced)
           </li>
           <li>Do not put long-lived service client secrets in browser banner embeds</li>
         </ul>

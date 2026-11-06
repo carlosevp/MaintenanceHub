@@ -3,7 +3,7 @@ import { useAuth } from "@/features/auth/AuthContext";
 import clsx from "clsx";
 
 const baseLinks = [
-  { to: "/", label: "Dashboard" },
+  { to: "/", label: "My Applications" },
   { to: "/calendar", label: "Calendar" },
   { to: "/catalog", label: "Catalog" },
   { to: "/subscriptions", label: "Subscriptions" },
@@ -21,6 +21,12 @@ export function Layout() {
 
   return (
     <div className="min-h-screen">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-ink-900 focus:px-3 focus:py-2 focus:text-sm focus:text-white"
+      >
+        Skip to main content
+      </a>
       <header className="border-b border-ink-200/70 bg-white/70 backdrop-blur">
         <div className="mh-shell flex flex-wrap items-center justify-between gap-4 py-4">
           <div className="flex items-baseline gap-3">
@@ -39,7 +45,7 @@ export function Layout() {
                 end={l.to === "/"}
                 className={({ isActive }) =>
                   clsx(
-                    "rounded-md px-3 py-1.5 text-sm font-medium transition",
+                    "rounded-md px-3 py-1.5 text-sm font-medium transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
                     isActive
                       ? "bg-ink-900 text-white"
                       : "text-ink-700 hover:bg-ink-100",
@@ -61,7 +67,7 @@ export function Layout() {
           </div>
         </div>
       </header>
-      <main className="mh-shell py-8">
+      <main id="main-content" className="mh-shell py-8" tabIndex={-1}>
         <Outlet />
       </main>
     </div>

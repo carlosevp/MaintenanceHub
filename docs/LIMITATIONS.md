@@ -17,6 +17,7 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 | **Application-scoped grants** | **Enforced** on event mutations and application updates. **Admin UI** for grant CRUD + group→role maps. Directory-group → ApplicationGrant auto-provision still limited. |
 | **M14 Impact analysis** | **Implemented + hardened**: dependency reverse traversal, publisher-scoped preview, confirm with revision tokens, etc. Advisory only; graph quality depends on CMDB/manual edges. |
 | **M15 Admin workspace** | **Implemented**: `/admin` Overview, Apps/Deps, SN/CMDB, Notifications, Users/Permissions, Jobs/Delivery, Audit. API authz required. Secrets are env/OpenShift only (status/redaction; no secret editor). See [administration.md](./administration.md). |
+| **M16 Consumer & publisher UX** | **Implemented**: My Applications homepage; calendar day/week/month/agenda + filters; four-step publisher wizard (Details→Impact→Audience→Review) with drafts/templates/Quick Publish; subscription app/env/event targets + multi-reminders; clearer email/bridge templates; authenticated shareable status URLs (`/status/apps/...`, `/status/events/...`, `/status/scheduled/...`). |
 | **Native mobile / Redis / RabbitMQ** | Out of scope. |
 
 ## Recurrence / occurrence caveats (known)
@@ -30,6 +31,10 @@ This document lists what is **explicitly incomplete or deferred**. Nothing liste
 - **M14 preview staleness / selection:** Revision token covers seeds, window, event/occ identity, exclusions, manuals, proposed set, and dependency fingerprint. Confirm rejects (409) stale tokens and unreviewed selection changes (`include_downstream` must match last previewed proposed set).
 - **M14 destination privacy:** Audience **counts** are always returned to authorized publishers; raw email/Teams destinations are omitted when seed-app grants are missing (viewers cannot call preview at all).
 - **Support-group subscription targets:** Still non-matching (deferred).
+- **M16 status pages:** Authenticated viewers only (same session as the app). Not anonymous public AD status. Share URLs omit internal notes/timeline.
+- **M16 ICS:** Feed refresh is client poll interval only — not push-realtime.
+- **M16 publisher reminders:** Wizard reminder offsets document publisher expectation; actual reminder delivery is owned by consumer subscriptions.
+- **M16 drafts:** Local browser draft only (not server-persisted drafts).
 
 ## Permanent non-goals
 

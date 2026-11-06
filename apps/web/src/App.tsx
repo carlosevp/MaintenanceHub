@@ -11,6 +11,7 @@ import { EventCreatePage } from "@/routes/EventCreatePage";
 import { SubscriptionsPage } from "@/routes/SubscriptionsPage";
 import { BannerDemoPage } from "@/routes/BannerDemoPage";
 import { AboutPage } from "@/routes/AboutPage";
+import { StatusApplicationPage, StatusEventPage } from "@/routes/StatusPage";
 import { AdminShell } from "@/routes/admin/AdminShell";
 import { AdminOverviewPage } from "@/routes/admin/AdminOverviewPage";
 import { AdminCatalogPage } from "@/routes/admin/AdminCatalogPage";
@@ -53,6 +54,13 @@ export default function App() {
           <Route path="subscriptions" element={<SubscriptionsPage />} />
           <Route path="banner-demo" element={<BannerDemoPage />} />
           <Route path="about" element={<AboutPage />} />
+          <Route path="status/apps/:applicationKey" element={<StatusApplicationPage />} />
+          <Route
+            path="status/apps/:applicationKey/envs/:environmentKey"
+            element={<StatusApplicationPage />}
+          />
+          <Route path="status/events/:eventId" element={<StatusEventPage />} />
+          <Route path="status/scheduled/:eventId" element={<StatusEventPage />} />
           <Route path="events/new" element={<EventCreatePage />} />
           <Route path="events/:id" element={<EventDetailPage />} />
           <Route path="admin" element={<AdminShell />}>

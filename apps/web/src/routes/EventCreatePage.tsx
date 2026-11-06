@@ -11,20 +11,56 @@ import { ImpactAnalysisPanel } from "@/components/ImpactAnalysisPanel";
 import { RecurrenceEditor, defaultRecurrence, type RecurrenceValue } from "@/components/RecurrenceEditor";
 import type { ConfirmReady, ExclusionRow } from "@/lib/impactPreviewSession";
 import { localWallTimeToUtcIso, ZonedDateTimeError } from "@/lib/zonedDateTime";
+import clsx from "clsx";
+
+type Step = "details" | "impact" | "audience" | "review";
+const DRAFT_KEY = "mh_publish_draft_v1";
+const STEPS: Step[] = ["details", "impact", "audience", "review"];
+const STEP_LABELS: Record<Step, string> = {
+  details: "Details",
+  impact: "Impact",
+  audience: "Audience",
+  review: "Review",
+};
+
+const TEMPLATES = [
+  {
+    id: "blank",
+    label: "Blank",
+    title: "",
+    description: "",
+    impact: "",
+  },
+  {
+    id: "db-patch",
+    label: "DB patch window",
+    title: "Database patch window",
+    description: "Scheduled vendor patch on shared database infrastructure.",
+    impact: "Brief connection resets; write traffic may queue.",
+  },
+  {
+    id: "app-deploy",
+    label: "App deploy",
+    title: "Application deploy window",
+    description: "Controlled deployment with verified rollback.",
+    impact: "Read-only or brief unavailability during cutover.",
+  },
+];
 
 export function EventCreatePage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
+  const quick = params.get("quick") === "1" || params.get("kind") === "manual_outage";
   const initialKind = params.get("kind") === "manual_outage" ? "manual_outage" : "planned_maintenance";
 
-  const [step, setStep] = useState<"details" | "impact">("details");
+  const [step, setStep] = useState<Step>("details");
   const [apps, setApps] = useState<Application[]>([]);
   const [envs, setEnvs] = useState<Environment[]>([]);
   const [infra, setInfra] = useState<InfraComponent[]>([]);
   const [kind, setKind] = useState(initialKind);
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(quick ? "Manual outage" : "");
   const [description, setDescription] = useState("");
-  const [impact, setImpact] = useState("");
+  const [impact, setImpact] = useState(quick ? "Service unavailable — investigating" : "");
   const [starts, setStarts] = useState("");
   const [ends, setEnds] = useState("");
   const [timezone, setTimezone] = useState("America/Chicago");
@@ -36,12 +72,17 @@ export function EventCreatePage() {
   const [envId2, setEnvId2] = useState("");
   const [recurring, setRecurring] = useState(false);
   const [recurrence, setRecurrence] = useState<RecurrenceValue>(defaultRecurrence());
+  const [reminderOffsets, setReminderOffsets] = useState("-1440,-60");
+  const [publisherNote, setPublisherNote] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmReady, setConfirmReady] = useState<ConfirmReady | null>(null);
   const [previewOk, setPreviewOk] = useState(false);
+  const [audienceNote, setAudienceNote] = useState<string | null>(null);
+  const [audienceCount, setAudienceCount] = useState<number | null>(null);
   const [reviewedExclusions, setReviewedExclusions] = useState<ExclusionRow[]>([]);
   const [reviewedManuals, setReviewedManuals] = useState<ImpactSeed[]>([]);
+  const [draftSaved, setDraftSaved] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -63,8 +104,23 @@ export function EventCreatePage() {
         setInfraId(i.find((x) => x.key.includes("oracle"))!.id);
         setEnvId(nonProd.id);
       }
+      try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (raw && !quick) {
+          const d = JSON.parse(raw) as Record<string, string>;
+          if (d.title) setTitle(d.title);
+          if (d.description) setDescription(d.description);
+          if (d.impact) setImpact(d.impact);
+          if (d.starts) setStarts(d.starts);
+          if (d.ends) setEnds(d.ends);
+          if (d.timezone) setTimezone(d.timezone);
+          if (d.kind) setKind(d.kind);
+        }
+      } catch {
+        /* ignore bad draft */
+      }
     })();
-  }, []);
+  }, [quick]);
 
   const seeds = useMemo(() => {
     const out: ImpactSeed[] = [];
@@ -121,25 +177,77 @@ export function EventCreatePage() {
     [],
   );
 
-  function onDetailsContinue(e: FormEvent) {
-    e.preventDefault();
+  function applyTemplate(id: string) {
+    const t = TEMPLATES.find((x) => x.id === id);
+    if (!t) return;
+    setTitle(t.title);
+    setDescription(t.description);
+    setImpact(t.impact);
+  }
+
+  function saveDraft() {
+    localStorage.setItem(
+      DRAFT_KEY,
+      JSON.stringify({ title, description, impact, starts, ends, timezone, kind }),
+    );
+    setDraftSaved(true);
+    setTimeout(() => setDraftSaved(false), 2000);
+  }
+
+  function validateDetails(): boolean {
     setError(null);
     if (!title || !starts || !ends) {
       setError("Title and window are required");
-      return;
+      return false;
     }
     try {
       localWallTimeToUtcIso(starts, timezone);
       localWallTimeToUtcIso(ends, timezone);
     } catch (err) {
       setError(err instanceof ZonedDateTimeError ? err.message : "Invalid window in selected timezone");
-      return;
+      return false;
     }
     if (!seeds.length) {
       setError("Select at least one maintenance target");
+      return false;
+    }
+    return true;
+  }
+
+  function onDetailsContinue(e: FormEvent) {
+    e.preventDefault();
+    if (!validateDetails()) return;
+    setStep("impact");
+  }
+
+  function onImpactContinue() {
+    if (!confirmReady || !previewOk) {
+      setError("Complete a successful impact preview before continuing");
       return;
     }
-    setStep("impact");
+    setError(null);
+    void (async () => {
+      try {
+        const preview = await api.impactPreview({
+          seeds,
+          starts_at: startsIso,
+          ends_at: endsIso,
+          exclusions: confirmReady.exclusions,
+          manual_additions: confirmReady.manualAdditions,
+          max_depth: 5,
+        });
+        setAudienceCount(preview.audience.unique_recipients);
+        setAudienceNote(preview.audience.note);
+      } catch {
+        setAudienceNote("Audience estimate unavailable until publish preview.");
+      }
+      setStep("audience");
+    })();
+  }
+
+  function onAudienceContinue() {
+    setError(null);
+    setStep("review");
   }
 
   async function onPublish() {
@@ -155,9 +263,9 @@ export function EventCreatePage() {
       const body: Record<string, unknown> = {
         kind,
         title,
-        description,
+        description: publisherNote ? `${description}\n\nPublisher note: ${publisherNote}` : description,
         expected_impact: impact,
-        approval_state: "approved_window",
+        approval_state: kind === "manual_outage" ? "confirmed_scheduled" : "approved_window",
         starts_at: startsAt,
         ends_at: endsAt,
         timezone,
@@ -180,7 +288,6 @@ export function EventCreatePage() {
         body.recurrence = rec;
       }
       const created = await api.createEvent(body);
-      // Re-preview with event_id so revision token matches confirm validation
       const preview = await api.impactPreview({
         seeds,
         starts_at: created.starts_at,
@@ -208,6 +315,7 @@ export function EventCreatePage() {
         max_depth: 5,
         publish: true,
       });
+      localStorage.removeItem(DRAFT_KEY);
       navigate(`/events/${published.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Publish failed");
@@ -217,29 +325,72 @@ export function EventCreatePage() {
   }
 
   const canPublish = Boolean(confirmReady) && previewOk && !busy;
+  const stepIndex = STEPS.indexOf(step);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <Link to="/" className="text-sm font-medium text-accent hover:underline">
-        ← Dashboard
+        ← My Applications
       </Link>
       <div className="mh-panel p-6">
-        <h1 className="font-display text-3xl font-semibold text-ink-950">
-          {kind === "manual_outage" ? "Report manual outage" : "Publish maintenance"}
-        </h1>
-        <p className="mt-2 text-sm text-ink-600">
-          {step === "details"
-            ? "Capture the window and direct targets, then review impact analysis before publish."
-            : "Confirm suggested impacts, reach, and conflicts. Publishing validates a revision token server-side."}
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="font-display text-3xl font-semibold text-ink-950">
+              {quick
+                ? "Quick Publish outage"
+                : kind === "manual_outage"
+                  ? "Report manual outage"
+                  : "Publish maintenance"}
+            </h1>
+            <p className="mt-2 text-sm text-ink-600">
+              Four steps: Details → Impact → Audience/reminders → Review. Confirmed impacts are never
+              inferred from the window alone. Series defaults apply to occurrences unless an occurrence
+              override is set later.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/events/new?quick=1&kind=manual_outage" className="mh-btn-ghost text-sm">
+              Quick Publish
+            </Link>
+            <button type="button" className="mh-btn-ghost text-sm" onClick={saveDraft}>
+              {draftSaved ? "Draft saved" : "Save draft"}
+            </button>
+          </div>
+        </div>
 
-        <ol className="mt-4 flex gap-3 text-xs font-semibold uppercase tracking-wide" aria-label="Publish steps">
-          <li className={step === "details" ? "text-accent" : "text-ink-400"}>1. Details</li>
-          <li className={step === "impact" ? "text-accent" : "text-ink-400"}>2. Impact analysis</li>
+        <ol className="mt-4 flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-wide" aria-label="Publish steps">
+          {STEPS.map((s, i) => (
+            <li
+              key={s}
+              className={clsx(step === s ? "text-accent" : i < stepIndex ? "text-ink-700" : "text-ink-400")}
+              aria-current={step === s ? "step" : undefined}
+            >
+              {i + 1}. {STEP_LABELS[s]}
+            </li>
+          ))}
         </ol>
 
         {step === "details" && (
           <form className="mt-6 space-y-4" onSubmit={onDetailsContinue}>
+            {!quick && (
+              <div>
+                <label className="mh-label" htmlFor="template">
+                  Start from template
+                </label>
+                <select
+                  id="template"
+                  className="mh-input"
+                  defaultValue="blank"
+                  onChange={(e) => applyTemplate(e.target.value)}
+                >
+                  {TEMPLATES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="mh-label" htmlFor="kind">
                 Kind
@@ -323,15 +474,24 @@ export function EventCreatePage() {
             </div>
 
             {kind === "planned_maintenance" && (
-              <RecurrenceEditor
-                enabled={recurring}
-                onEnabledChange={setRecurring}
-                value={recurrence}
-                onChange={setRecurrence}
-                startsAt={starts}
-                endsAt={ends}
-                timezone={timezone}
-              />
+              <>
+                <RecurrenceEditor
+                  enabled={recurring}
+                  onEnabledChange={setRecurring}
+                  value={recurrence}
+                  onChange={setRecurrence}
+                  startsAt={starts}
+                  endsAt={ends}
+                  timezone={timezone}
+                />
+                {recurring && (
+                  <p className="rounded-md border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-600">
+                    Series defaults (title, expected impact, primary targets) apply to each occurrence.
+                    Reschedule, cancel, extend, and occurrence impact overrides are edited on the
+                    occurrence detail after publish.
+                  </p>
+                )}
+              </>
             )}
 
             <fieldset className="rounded-lg border border-ink-200 p-3">
@@ -463,6 +623,129 @@ export function EventCreatePage() {
                 onClick={() => setStep("details")}
                 disabled={busy}
               >
+                Back
+              </button>
+              <button
+                type="button"
+                className="mh-btn"
+                onClick={onImpactContinue}
+                disabled={!confirmReady || !previewOk}
+              >
+                Continue to audience
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === "audience" && (
+          <div className="mt-6 space-y-4">
+            <div className="rounded-lg border border-ink-200 bg-ink-50 p-4 text-sm text-ink-700">
+              <p className="font-semibold text-ink-900">
+                Estimated unique recipients: {audienceCount ?? "—"}
+              </p>
+              <p className="mt-2">{audienceNote}</p>
+              <p className="mt-2 text-xs">
+                Matching uses effective confirmed impacts (including occurrence overrides). Multiple
+                subscriptions for the same destination are deduplicated per delivery idempotency key —
+                one notification per destination per event/reminder slot.
+              </p>
+            </div>
+            <div>
+              <label className="mh-label" htmlFor="reminders">
+                Suggested reminder offsets (minutes before start, comma-separated)
+              </label>
+              <input
+                id="reminders"
+                className="mh-input"
+                value={reminderOffsets}
+                onChange={(e) => setReminderOffsets(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-ink-500">
+                Consumer subscriptions own actual reminder schedules. These offsets document the
+                publisher expectation shown on Review.
+              </p>
+            </div>
+            <div>
+              <label className="mh-label" htmlFor="pubnote">
+                Publisher note (optional)
+              </label>
+              <textarea
+                id="pubnote"
+                className="mh-input"
+                rows={2}
+                value={publisherNote}
+                onChange={(e) => setPublisherNote(e.target.value)}
+              />
+            </div>
+            {error && (
+              <p
+                className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="mh-btn-ghost" onClick={() => setStep("impact")}>
+                Back
+              </button>
+              <button type="button" className="mh-btn" onClick={onAudienceContinue}>
+                Continue to review
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === "review" && (
+          <div className="mt-6 space-y-4">
+            <dl className="grid gap-3 text-sm sm:grid-cols-2">
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-500">Title</dt>
+                <dd className="font-medium">{title}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-500">Kind</dt>
+                <dd className="font-medium">{kind}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-500">Window</dt>
+                <dd className="font-medium">
+                  {starts} → {ends} ({timezone})
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                  Expected impact
+                </dt>
+                <dd className="font-medium">{impact || "—"}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                  Direct targets
+                </dt>
+                <dd className="font-medium">{seeds.length}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-semibold uppercase tracking-wide text-ink-500">
+                  Reminder offsets
+                </dt>
+                <dd className="font-medium">{reminderOffsets}</dd>
+              </div>
+            </dl>
+            <p className="rounded-md border border-ink-200 bg-ink-50 px-3 py-2 text-xs text-ink-600">
+              Publishing validates a revision token server-side. Approved windows are not active
+              outages until communication is confirmed and the lifecycle is executing.
+            </p>
+            {error && (
+              <p
+                className="rounded-md border border-danger/30 bg-danger-soft px-3 py-2 text-sm text-danger"
+                role="alert"
+              >
+                {error}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="mh-btn-ghost" onClick={() => setStep("audience")} disabled={busy}>
                 Back
               </button>
               <button

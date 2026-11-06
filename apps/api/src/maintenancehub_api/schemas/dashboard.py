@@ -18,7 +18,13 @@ class DashboardSummary(BaseModel):
     upcoming: DashboardSlice
     recent: DashboardSlice
     outages: DashboardSlice
+    extended: DashboardSlice = Field(default_factory=lambda: DashboardSlice(count=0, items=[]))
+    cancelled: DashboardSlice = Field(default_factory=lambda: DashboardSlice(count=0, items=[]))
     as_of: datetime
+    note: str = (
+        "Active/current items require confirmed communication and human-published "
+        "executing status — never inferred from the calendar window alone."
+    )
 
 
 class CalendarEventOut(BaseModel):

@@ -69,7 +69,10 @@ export type DashboardSummary = {
   upcoming: { count: number; items: MaintenanceEvent[] };
   recent: { count: number; items: MaintenanceEvent[] };
   outages: { count: number; items: MaintenanceEvent[] };
+  extended?: { count: number; items: MaintenanceEvent[] };
+  cancelled?: { count: number; items: MaintenanceEvent[] };
   as_of: string;
+  note?: string;
 };
 
 export type CalendarEvent = {
@@ -342,6 +345,27 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  statusApplication: (applicationKey: string, environmentKey?: string) => {
+    const q = environmentKey ? `?environment_key=${encodeURIComponent(environmentKey)}` : "";
+    return request<Record<string, unknown>>(
+      `/api/v1/status/applications/${encodeURIComponent(applicationKey)}${q}`,
+    );
+  },
+  statusEvent: (eventId: string) =>
+    request<Record<string, unknown>>(`/api/v1/status/events/${encodeURIComponent(eventId)}`),
+  statusScheduled: (eventId: string) =>
+    request<Record<string, unknown>>(`/api/v1/status/scheduled/${encodeURIComponent(eventId)}`),
+  subscriptions: () => request<unknown[]>("/api/v1/subscriptions"),
+  createSubscription: (body: unknown) =>
+    request<unknown>("/api/v1/subscriptions", { method: "POST", body: JSON.stringify(body) }),
+  deleteSubscription: (id: string) =>
+    request<void>(`/api/v1/subscriptions/${id}`, { method: "DELETE" }),
+  createCalendarToken: (body: unknown) =>
+    request<{ token: string; feed_url: string }>("/api/v1/calendar-tokens", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
 
   // ----- M15 Administration -----
   adminOverview: () => request<Record<string, unknown>>("/api/v1/admin/overview"),
