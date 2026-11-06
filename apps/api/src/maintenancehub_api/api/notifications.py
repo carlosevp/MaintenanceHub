@@ -301,24 +301,45 @@ def test_send(
         )
     ),
 ) -> dict:
-    """Preview/test send — uses log sink / capture when SMTP_ENABLED=false."""
-    if user.is_admin:
+    """Preview/test send.
+
+    - ``capture_only=true`` (demo): never dials external SMTP; publishers may use it.
+    - Real send path: **admin + notification_admin** only.
+    """
+    from maintenancehub_api.config import get_settings
+    from maintenancehub_api.domain.pa_routing import (
+        assert_smtp_to_differs_from_route,
+        extract_rendered_routing,
+        is_pa_template,
+    )
+
+    capture_only = bool(body.capture_only)
+    if not capture_only:
+        if not user.is_admin:
+            raise HTTPException(
+                status_code=403,
+                detail="Real test-send requires platform administrator",
+            )
         require_capability("notification_admin")
+    elif user.is_admin:
+        require_capability("notification_admin")
+
     ensure_default_templates(db)
     parts = render_template_parts(db, body.template_key)
     ctx = sample_context()
     ctx.update(
         {
-            "title": "Test notification",
+            "title": "Claims INT batch window",
             "kind": "planned_maintenance",
             "status": "scheduled",
             "approval_state": "confirmed_scheduled",
             "approval_label": "Confirmed",
             "starts_at": "2026-11-10T02:00:00Z",
             "ends_at": "2026-11-10T04:00:00Z",
-            "timezone": "UTC",
-            "expected_impact": "None (test)",
+            "timezone": "America/Chicago",
+            "expected_impact": "Brief read-only",
             "note": "test send",
+            "bridge_channel_key": body.bridge_channel_key or "ops-payments",
             **body.context,
         }
     )
@@ -338,30 +359,42 @@ def test_send(
         if parts["body_html_template"]
         else None
     )
+    routing = extract_rendered_routing(body_plain=body_plain, body_html=body_html or "")
 
+    settings = get_settings()
     if body.destination_type == "teams_bridge_channel":
         from maintenancehub_api.adapters.bridge import render_bridge_subject
 
-        key_name = parts.get("key") or body.template_key
-        if key_name.startswith("pa.") or subject.strip().startswith("[TEAMS]"):
-            # PA-compatible: keep template subject; SMTP To is bridge mailbox.
-            pass
+        if is_pa_template(
+            key=parts.get("key"),
+            subject_template=parts.get("subject_template"),
+            body_plain=parts.get("body_plain_template"),
+        ):
+            pass  # keep PA subject trigger
         else:
             subject = render_bridge_subject(
                 channel_key=body.bridge_channel_key or "test-channel",
                 title=ctx.get("title") or "Test notification",
             )
         channel = "bridge"
+        # Envelope = bridge mailbox; destination arg is ignored when mailbox configured.
+        smtp_to = settings.bridge_mailbox or body.destination
     else:
         channel = "smtp"
+        smtp_to = body.destination
 
-    key = f"test:{user.id}:{body.destination}:{body.template_key}:{uuid.uuid4().hex[:8]}"
+    try:
+        assert_smtp_to_differs_from_route(smtp_to=smtp_to, routing_email=routing)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    key = f"test:{user.id}:{smtp_to}:{body.template_key}:{uuid.uuid4().hex[:8]}"
     row, _created = create_delivery_idempotent(
         db,
         idempotency_key=key,
         channel=channel,
         destination_type=body.destination_type,
-        destination=body.destination,
+        destination=smtp_to,
         subject=subject,
         body=body_plain,
         body_plain=body_plain,
@@ -372,16 +405,19 @@ def test_send(
             "subject": subject,
             "body_plain": body_plain,
             "body_html": body_html or "",
-            "teams_target_email": ctx.get("teams_target_email") or "",
+            "teams_target_email": routing or ctx.get("teams_target_email") or "",
             "bridge_channel_key": ctx.get("bridge_channel_key") or "",
             "template_key": parts.get("key"),
             "template_id": parts.get("template_id"),
             "template_version": parts.get("template_version"),
             "channel": channel,
-            "destination": body.destination,
+            "destination": smtp_to,
+            "smtp_to": smtp_to,
             "destination_type": body.destination_type,
             "test": True,
-            "capture_only": body.capture_only,
+            "capture_only": capture_only,
+            "force_capture": capture_only,
+            "teams_delivery_confirmed": False,
         },
         event_id=None,
         subscription_id=None,
@@ -389,26 +425,34 @@ def test_send(
     if not row:
         raise HTTPException(status_code=500, detail="Failed to create test delivery")
     sent = send_delivery(db, row.id)
+    status_val = sent.status.value if hasattr(sent.status, "value") else sent.status
     return {
         "delivery_id": sent.id,
-        "status": sent.status.value if hasattr(sent.status, "value") else sent.status,
+        "status": status_val,
         "channel": sent.channel,
         "subject": sent.subject,
         "provider_message_id": sent.provider_message_id,
         "rendered_payload": sent.rendered_payload,
+        "smtp_to": smtp_to,
+        "teams_routing_email": routing,
+        "teams_delivery_confirmed": False,
         "preview": {
             "subject": subject,
             "body": body_plain,
             "body_plain": body_plain,
             "body_html": body_html or "",
+            "routing_line": f"To: {routing}" if routing else None,
         },
         "note": (
-            "Teams via email bridge. Body `To:` is PA routing; SMTP To is the bridge mailbox."
-            if body.destination_type == "teams_bridge_channel"
-            else (
-                "Demo capture / log sink (SMTP disabled or capture dir set)."
-                if body.capture_only
-                else "SMTP or log sink"
+            "SMTP/log acceptance is NOT Teams delivery confirmation. "
+            + (
+                "Demo capture only — no external SMTP."
+                if capture_only
+                else (
+                    "Bridge: SMTP To is mailbox; body To: is PA Teams routing."
+                    if body.destination_type == "teams_bridge_channel"
+                    else "SMTP or log sink."
+                )
             )
         ),
     }

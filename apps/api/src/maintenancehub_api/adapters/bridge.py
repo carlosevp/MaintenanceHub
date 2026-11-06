@@ -40,22 +40,26 @@ class BridgeAdapter:
         mailbox: str | None = None,
         subject: str | None = None,
         body_html: str | None = None,
+        force_capture: bool = False,
     ) -> SendResult:
         settings = get_settings()
-        if not settings.bridge_enabled and not settings.smtp_enabled:
+        if not settings.bridge_enabled and not settings.smtp_enabled and not force_capture:
             # Still allow log-sink path for local demo
             pass
-        if not settings.bridge_enabled and settings.smtp_enabled:
+        if (
+            not settings.bridge_enabled
+            and settings.smtp_enabled
+            and not force_capture
+        ):
             return SendResult(
                 ok=False,
                 error="BRIDGE_ENABLED=false — Teams via email bridge is disabled",
                 channel="bridge",
             )
 
-        to = mailbox or settings.bridge_mailbox
-        if not to:
-            # Fall back to log sink destination label
-            to = settings.bridge_mailbox or "bridge-mailbox@example.com"
+        # Envelope To is always the configured bridge mailbox when set.
+        # Subscription destination must not override PA routing (body To:).
+        to = settings.bridge_mailbox or mailbox or "bridge-mailbox@example.com"
 
         final_subject = subject if subject is not None else render_bridge_subject(
             channel_key=channel_key, title=title
@@ -65,12 +69,16 @@ class BridgeAdapter:
             to,
             final_subject,
         )
-        # Reuse SMTP path; when SMTP disabled, log sink still records the bridged subject.
+        # Reuse SMTP path; when SMTP disabled / capture-only, never dials external SMTP.
         # SMTP To = bridge mailbox. Body may contain `To: <email>` for Power Automate routing.
         result = get_smtp_adapter().send(
-            to=to, subject=final_subject, body=body, body_html=body_html
+            to=to,
+            subject=final_subject,
+            body=body,
+            body_html=body_html,
+            force_capture=force_capture,
         )
-        result.channel = "bridge"
+        result.channel = "capture" if force_capture else "bridge"
         return result
 
     def connection_test(self) -> dict:

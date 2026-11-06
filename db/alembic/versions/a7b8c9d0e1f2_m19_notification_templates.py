@@ -54,7 +54,7 @@ def upgrade() -> None:
         ("version", sa.Column("version", sa.Integer(), server_default="1", nullable=False)),
         (
             "is_system",
-            sa.Column("is_system", sa.Boolean(), server_default=sa.text("0"), nullable=False),
+            sa.Column("is_system", sa.Boolean(), server_default=sa.false(), nullable=False),
         ),
         ("created_by", sa.Column("created_by", sa.String(length=36), nullable=True)),
         ("updated_by", sa.Column("updated_by", sa.String(length=36), nullable=True)),
@@ -72,14 +72,19 @@ def upgrade() -> None:
     if not _has_index("notification_templates", "ix_notification_templates_status"):
         op.create_index("ix_notification_templates_status", "notification_templates", ["status"])
 
+    # Dialect-safe backfill (SQLite quotes "key"; Postgres uses quoted identifier too).
+    bind = op.get_bind()
+    is_pg = bind.dialect.name == "postgresql"
+    true_lit = "TRUE" if is_pg else "1"
+    key_ident = '"key"'  # reserved-ish on both engines when quoted
     op.execute(
         sa.text(
-            """
+            f"""
             UPDATE notification_templates
             SET body_plain_template = COALESCE(body_plain_template, body_template),
-                name = COALESCE(name, "key"),
-                event_type = COALESCE(event_type, "key"),
-                is_system = 1,
+                name = COALESCE(name, {key_ident}),
+                event_type = COALESCE(event_type, {key_ident}),
+                is_system = {true_lit},
                 created_at = COALESCE(created_at, CURRENT_TIMESTAMP)
             """
         )

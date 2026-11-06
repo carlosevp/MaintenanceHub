@@ -13,6 +13,11 @@ from maintenancehub_api.adapters.bridge import get_bridge_adapter, render_bridge
 from maintenancehub_api.adapters.smtp import get_smtp_adapter
 from maintenancehub_api.config import get_settings
 from maintenancehub_api.domain import template_manager as tmpl_mgr
+from maintenancehub_api.domain.pa_routing import (
+    assert_smtp_to_differs_from_route,
+    extract_rendered_routing,
+    is_pa_template,
+)
 from maintenancehub_api.domain.templates import (
     DEFAULT_TEMPLATES,
     approval_label,
@@ -283,9 +288,40 @@ def create_delivery_idempotent(
 
 
 def _is_pa_style_template(parts: dict[str, Any]) -> bool:
-    key = parts.get("key") or ""
-    subj = parts.get("subject_template") or ""
-    return key.startswith("pa.") or subj.strip().startswith("[TEAMS]")
+    row = parts.get("row")
+    channel = getattr(row, "channel", None) if row is not None else None
+    return is_pa_template(
+        key=parts.get("key"),
+        channel=channel,
+        subject_template=parts.get("subject_template"),
+        body_plain=parts.get("body_plain_template"),
+    )
+
+
+# Outbox / lifecycle → template key (schedule, remind, extend, cancel, complete, …)
+LIFECYCLE_TEMPLATE_MAP: dict[str, str] = {
+    "event.created": "event.created",
+    "event.confirmed": "event.created",
+    "event.scheduled": "event.created",
+    "event.transitioned": "event.transitioned",
+    "event.extended": "event.extended",
+    "event.rescheduled": "event.rescheduled",
+    "event.cancelled": "event.transitioned",
+    "event.completed": "event.transitioned",
+    "event.reminder": "event.reminder",
+    "event.impacts_changed": "event.created",
+    "pa.teams_alert": "pa.teams_alert",
+}
+
+
+def resolve_lifecycle_template_key(event_type: str, *, to_status: str | None = None) -> str:
+    """Map outbox/lifecycle names to a deterministic DEFAULT / active template key."""
+    if to_status in {"cancelled", "completed"}:
+        return "event.transitioned"
+    key = LIFECYCLE_TEMPLATE_MAP.get(event_type, event_type)
+    if key not in DEFAULT_TEMPLATES and not key.startswith("pa."):
+        return "event.transitioned"
+    return key
 
 
 def enqueue_deliveries_for_event(
@@ -321,12 +357,14 @@ def enqueue_deliveries_for_event(
 
     parts = render_template_parts(db, template_key)
 
+    settings = get_settings()
     created = 0
     for sub in matching_subscriptions(db, event, record=record):
         sub_extra = dict(extra_context or {})
         if sub.destination_type == "teams_bridge_channel":
             channel = "bridge"
-            dest = sub.destination
+            # Envelope recipient is the bridge mailbox — never the Teams route.
+            dest = settings.bridge_mailbox or sub.destination
             sub_extra.setdefault("bridge_channel_key", sub.bridge_channel_key or "default")
             # Body `To: {{teams_target_email}}` is PA routing — not the SMTP envelope.
             sub_extra.setdefault(
@@ -347,6 +385,12 @@ def enqueue_deliveries_for_event(
             else None
         )
 
+        routing = extract_rendered_routing(
+            body_plain=body_plain, body_html=body_html or ""
+        )
+        if channel == "bridge":
+            assert_smtp_to_differs_from_route(smtp_to=dest, routing_email=routing)
+
         if sub.destination_type == "teams_bridge_channel" and not _is_pa_style_template(parts):
             # Legacy subject-token routing for non-PA templates.
             subj = render_bridge_subject(
@@ -360,6 +404,27 @@ def enqueue_deliveries_for_event(
         # same series can each notify start/complete/extend/cancel independently.
         orig_key = (extra_context or {}).get("orig_key") or "master"
         key = f"event:{event.id}:{template_key}:{reason}:orig:{orig_key}:sub:{sub.id}"
+        # Pin template id/version + fully rendered bodies so retries never re-resolve.
+        payload = {
+            "subject": subj,
+            "body_plain": body_plain,
+            "body_html": body_html or "",
+            "teams_target_email": routing or ctx.get("teams_target_email") or "",
+            "bridge_channel_key": ctx.get("bridge_channel_key") or "",
+            "template_key": parts.get("key"),
+            "template_id": parts.get("template_id"),
+            "template_version": parts.get("template_version"),
+            "channel": channel,
+            "destination": dest,
+            "destination_type": sub.destination_type,
+            "smtp_to": dest,
+            "pa_routing_note": (
+                "Body To: line is Power Automate routing; SMTP To is the bridge mailbox."
+                if _is_pa_style_template(parts)
+                else None
+            ),
+            "teams_delivery_confirmed": False,
+        }
         row, is_new = create_delivery_idempotent(
             db,
             idempotency_key=key,
@@ -372,24 +437,7 @@ def enqueue_deliveries_for_event(
             body_html=body_html,
             template_id=parts.get("template_id"),
             template_version=parts.get("template_version"),
-            rendered_payload={
-                "subject": subj,
-                "body_plain": body_plain,
-                "body_html": body_html or "",
-                "teams_target_email": ctx.get("teams_target_email") or "",
-                "bridge_channel_key": ctx.get("bridge_channel_key") or "",
-                "template_key": parts.get("key"),
-                "template_id": parts.get("template_id"),
-                "template_version": parts.get("template_version"),
-                "channel": channel,
-                "destination": dest,
-                "destination_type": sub.destination_type,
-                "pa_routing_note": (
-                    "Body To: line is Power Automate routing; SMTP To is the bridge mailbox."
-                    if _is_pa_style_template(parts)
-                    else None
-                ),
-            },
+            rendered_payload=payload,
             event_id=event.id,
             subscription_id=sub.id,
         )
@@ -688,20 +736,12 @@ def process_notify_dispatch(db: Session, payload: dict[str, Any]) -> dict[str, A
             "orig_key": payload.get("orig_key") or "master",
         }
 
-    # Normalize known outbox event_type names
-    mapping = {
-        "event.created": "event.created",
-        "event.confirmed": "event.created",  # reuse created template when approval confirmed
-        "event.transitioned": "event.transitioned",
-        "event.extended": "event.extended",
-        "event.rescheduled": "event.rescheduled",
-        # Impact set changed on an already-published event — reuse created template;
-        # delivery idempotency prevents resending unchanged recipient/reason pairs.
-        "event.impacts_changed": "event.created",
-    }
-    template_key = mapping.get(event_type, event_type)
-    if template_key not in DEFAULT_TEMPLATES:
-        template_key = "event.transitioned"
+    to_status = None
+    if "to" in payload:
+        to_status = str(payload.get("to") or "")
+    elif event_type in {"event.cancelled", "event.completed"}:
+        to_status = event_type.split(".", 1)[-1]
+    template_key = resolve_lifecycle_template_key(event_type, to_status=to_status)
 
     n = enqueue_deliveries_for_event(
         db, event, template_key=template_key, extra_context=extra, reason=template_key
@@ -874,50 +914,67 @@ def send_delivery(db: Session, delivery_id: str) -> NotificationDelivery:
     delivery.attempt_count += 1
     db.commit()
 
-    plain = delivery.body_plain or delivery.body or ""
-    html_body = delivery.body_html
-    # Prefer persisted rendered payload when present (M19).
-    if delivery.rendered_payload and isinstance(delivery.rendered_payload, dict):
-        plain = delivery.rendered_payload.get("body_plain") or plain
-        html_body = delivery.rendered_payload.get("body_html") or html_body
+    # Retries MUST use the pinned rendered payload — never re-resolve templates.
+    payload = delivery.rendered_payload if isinstance(delivery.rendered_payload, dict) else {}
+    plain = payload.get("body_plain") or delivery.body_plain or delivery.body or ""
+    html_body = payload.get("body_html") or delivery.body_html
+    subject = payload.get("subject") or delivery.subject or ""
+    force_capture = bool(payload.get("capture_only") or payload.get("force_capture"))
 
-    if delivery.destination_type == "teams_bridge_channel" or delivery.channel == "bridge":
-        # Extract channel key from subject or subscription
-        channel_key = "default"
-        if delivery.subscription_id:
+    if delivery.destination_type == "teams_bridge_channel" or delivery.channel in {
+        "bridge",
+        "capture",
+    }:
+        channel_key = payload.get("bridge_channel_key") or "default"
+        if channel_key == "default" and delivery.subscription_id:
             sub = db.get(Subscription, delivery.subscription_id)
             if sub and sub.bridge_channel_key:
                 channel_key = sub.bridge_channel_key
+        mailbox = settings.bridge_mailbox or delivery.destination
+        routing = payload.get("teams_target_email") or extract_rendered_routing(
+            body_plain=plain, body_html=html_body or ""
+        )
+        assert_smtp_to_differs_from_route(smtp_to=mailbox or "", routing_email=routing)
         result = get_bridge_adapter().send(
             channel_key=channel_key,
-            title=delivery.subject or "MaintenanceHub",
-            subject=delivery.subject,
+            title=subject or "MaintenanceHub",
+            subject=subject,
             body=plain,
             body_html=html_body,
-            mailbox=delivery.destination if "@" in (delivery.destination or "") else None,
+            mailbox=mailbox,
+            force_capture=force_capture,
         )
     else:
         result = get_smtp_adapter().send(
             to=delivery.destination,
-            subject=delivery.subject or "",
+            subject=subject,
             body=plain,
             body_html=html_body,
+            force_capture=force_capture,
         )
 
     if result.ok:
-        # SMTP acceptance is recorded as sent. Uncertain hand-off (accepted but
-        # confirmation lost) still counts as sent so admin retry cannot duplicate.
+        # SMTP acceptance is recorded as sent. This is NOT Teams delivery confirmation.
         delivery.status = DeliveryStatus.sent
         delivery.provider_message_id = result.provider_message_id
         delivery.channel = result.channel
         delivery.last_error = result.error if getattr(result, "uncertain", False) else None
+        if isinstance(delivery.rendered_payload, dict):
+            delivery.rendered_payload = {
+                **delivery.rendered_payload,
+                "teams_delivery_confirmed": False,
+                "smtp_accepted": True,
+                "note": (
+                    "SMTP/log acceptance ≠ Teams delivered. Power Automate confirms Teams separately."
+                ),
+            }
     else:
         if delivery.attempt_count >= settings.delivery_max_attempts:
             delivery.status = DeliveryStatus.dead
         else:
             delivery.status = DeliveryStatus.failed
             delivery.next_attempt_at = _now() + timedelta(seconds=min(3600, 2**delivery.attempt_count))
-            # Re-queue send
+            # Re-queue send — still uses the same pinned rendered_payload / template_version.
             _enqueue_send_job(
                 db,
                 delivery_id=delivery.id,

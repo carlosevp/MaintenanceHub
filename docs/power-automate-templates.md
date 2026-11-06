@@ -2,66 +2,119 @@
 
 MaintenanceHub sends **email only** (SMTP or the Power Automate email bridge). There is **no** Microsoft Graph, Teams webhook, or Teams API integration.
 
-Admins manage templates under **Administration → Notifications** (capability `notification_admin`).
+Admins manage templates under **Administration → Notifications** (capability `notification_admin`) using **Edit / Preview / Test** tabs.
 
-## Roles
+## Contract (protected on save)
 
-| Piece | Meaning |
-|-------|---------|
-| **SMTP To** | Envelope recipient — for Teams bridge sends this is the configured **bridge mailbox**. |
-| **Body `To: …` line** | **Power Automate routing** — the flow parses this address and posts to the matching Teams channel/chat. It is **not** the SMTP To header. |
-| **Subject** | Filter/trigger for the flow. PA sample default: `[TEAMS] Maintenance Alert`. |
+| Piece | Value | Meaning |
+|-------|-------|---------|
+| **Subject** | `[TEAMS] Maintenance Alert` | Flow trigger / filter. Locked for PA templates. |
+| **SMTP To** | Bridge mailbox (`BRIDGE_MAILBOX`) | Envelope recipient only. |
+| **Body first line** | `To: {{teams_target_email}}` | **Power Automate Teams routing** — not the SMTP To header. |
+
+Saving a PA template (key `pa.*`, channel `bridge`, or subject/body matching the contract) **re-applies** this envelope if body edits strip the routing line. Plain and HTML must both yield the same routing address after render. SMTP To must never equal the body routing email.
 
 ## Sample system template: `pa.teams_alert`
 
-- **Subject:** `[TEAMS] Maintenance Alert`
-- **Plain body (start):**
-
 ```text
+Subject: [TEAMS] Maintenance Alert
+
 To: {{teams_target_email}}
 
 MaintenanceHub notice (human-published — not monitoring).
+
+Title: {{title}}
+Status: {{status}}
 …
 ```
 
-Placeholders use `{{name}}` (Power Automate style). Legacy `{name}` still works.
+Placeholders: `{{name}}` (preferred) or legacy `{name}`. HTML values are escaped; admin HTML is sanitized.
 
-## Configure the Power Automate flow
+## Exact Power Automate flow example
 
-1. **Trigger:** When a new email arrives in the bridge mailbox (Outlook / Office 365).
-2. **Condition (recommended):** Subject equals / starts with `[TEAMS] Maintenance Alert`  
-   (or contains your org’s subject convention).
-3. **Parse routing address from the body:**
-   - Take the email body (prefer plain text).
-   - Find the first line matching `To: <email>`.
-   - Extract the email (trim whitespace).
-4. **Post to Teams** using that address (channel email / user) via the **Teams** connector actions your tenant allows — still driven by email content, not by MaintenanceHub calling Graph.
-5. **Ignore SMTP To** for channel selection; it only delivers mail into the bridge mailbox.
+Assumes Office 365 Outlook + Teams connectors in your tenant.
 
-### Example expression sketch
+### 1. Trigger
+
+**When a new email arrives (V3)**  
+- Folder: Inbox (bridge mailbox)  
+- Only with attachments: No  
+
+### 2. Condition — subject trigger
+
+**Condition** → Subject **starts with** / **equals**:
 
 ```text
-first(split(first(split(triggerOutputs()?['body/body'], 'To: '))[1], '\n'))
+[TEAMS] Maintenance Alert
 ```
 
-(Adapt to your trigger’s body field; strip HTML if the message is multipart.)
+If false → terminate (Succeeded).
+
+### 3. Compose — extract Teams routing from body
+
+Prefer **plain text body**. Expression (Power Automate):
+
+```text
+trim(
+  first(
+    split(
+      first(
+        skip(
+          split(coalesce(triggerOutputs()?['body/body'], ''), 'To:'),
+          1
+        )
+      ),
+      decodeUriComponent('%0A')
+    )
+  )
+)
+```
+
+Simpler if you store the body in Compose `BodyText` first:
+
+```text
+trim(first(split(first(skip(split(outputs('BodyText'), 'To:'), 1)), decodeUriComponent('%0A'))))
+```
+
+Name the Compose output e.g. `TeamsRouteEmail`.
+
+**Do not** use the Outlook **To** header — that is the bridge mailbox (SMTP envelope).
+
+### 4. Post to Teams
+
+Use your org’s approved action, for example:
+
+- **Post message in a chat or channel** with recipient = `outputs('TeamsRouteEmail')`, or  
+- **Send an email** to the channel email address from Compose  
+
+Message body can reuse the remainder of the MaintenanceHub email (everything after the routing line).
+
+### 5. Acceptance criteria checklist
+
+- [ ] Flow only runs when subject is `[TEAMS] Maintenance Alert`  
+- [ ] Teams destination comes from body `To:` line  
+- [ ] Bridge mailbox is never used as the Teams route  
+- [ ] SMTP/`sent` in MaintenanceHub ≠ confirmed Teams delivery  
 
 ## Admin UI workflow
 
-1. Open `/admin/notifications`.
-2. Select `pa.teams_alert` (or clone it).
-3. Edit subject / plain / HTML; use the placeholder picker.
-4. **Preview** with a sample `teams_target_email`.
-5. **Test send (demo capture)** — with `MH_NOTIFICATION_CAPTURE_DIR` set, messages are written as JSON under that directory (no real SMTP).
-6. **Test send (real path)** — uses SMTP when enabled; otherwise the log sink.
-7. Save creates a **version**; restore from history; deactivate without deleting system templates.
+1. `/admin/notifications` → select `pa.teams_alert`  
+2. **Edit** — routing block is read-only; edit content + HTML (source / safe preview); placeholder picker  
+3. **Preview** — realistic sample; routing vs content separated  
+4. **Test** — **demo capture** never dials external SMTP; **real path** is admin-only  
+5. Save → new version; restore from history; deactivate (system templates cannot archive)
 
 ## Worker behavior
 
-Lifecycle / reminder jobs resolve the **active** template for the event type, render subject + plain + HTML (HTML values escaped), and **persist `rendered_payload` on the delivery row before send**. Bridge sends keep the rendered PA subject when the template is PA-style; legacy templates still use `[MH-ROUTE:{channel_key}] {title}` subject tokens.
+Lifecycle jobs (create/schedule, remind, extend, cancel, complete/transition) resolve the **active** template deterministically:
 
-## Security notes
+1. Active row with `key == event_type`  
+2. Else active rows with matching `event_type`, ordered by `key` ASC  
 
-- Substituted placeholder values are HTML-escaped in HTML bodies.
-- Admin HTML fragments are sanitized (script/style/`on*`/javascript: URLs stripped).
-- Template mutations are admin-only and audited (`notification_template.*`).
+Rendered subject/plain/HTML + `template_id` / `template_version` are persisted on the delivery **before send**. Retries reuse that payload and **do not** switch versions. Later template edits only affect new deliveries.
+
+## Security / status notes
+
+- Substituted values HTML-escaped; fragments sanitized  
+- Template mutations audited (`notification_template.*`)  
+- Delivery `status=sent` means SMTP/log **acceptance** only — `teams_delivery_confirmed` is always false in-app  

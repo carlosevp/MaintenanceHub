@@ -9,6 +9,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from maintenancehub_api.domain.audit import write_audit
+from maintenancehub_api.domain.pa_routing import (
+    PA_SUBJECT,
+    apply_pa_contract,
+    validate_pa_extractable,
+)
 from maintenancehub_api.domain.templates import (
     DEFAULT_TEMPLATES,
     PLACEHOLDERS,
@@ -65,22 +70,30 @@ def get_template_row(db: Session, key: str) -> NotificationTemplate | None:
 
 
 def resolve_active_template(db: Session, event_type: str) -> NotificationTemplate | None:
-    """Prefer an active admin template for ``event_type``, else system key match."""
+    """Deterministic active template for an event type / key.
+
+    Order of preference (stable; ignores ``updated_at`` so edits don't reshuffle picks):
+    1. Active row whose ``key`` equals ``event_type``
+    2. Active rows with ``event_type`` match, ordered by ``key`` ASC
+    """
     ensure_default_templates(db)
-    row = (
+    exact = (
+        db.query(NotificationTemplate)
+        .filter(
+            NotificationTemplate.key == event_type,
+            NotificationTemplate.status == "active",
+        )
+        .first()
+    )
+    if exact:
+        return exact
+    return (
         db.query(NotificationTemplate)
         .filter(
             NotificationTemplate.event_type == event_type,
             NotificationTemplate.status == "active",
         )
-        .order_by(NotificationTemplate.updated_at.desc())
-        .first()
-    )
-    if row:
-        return row
-    return (
-        db.query(NotificationTemplate)
-        .filter(NotificationTemplate.key == event_type, NotificationTemplate.status == "active")
+        .order_by(NotificationTemplate.key.asc())
         .first()
     )
 
@@ -144,6 +157,21 @@ def create_template(
     if db.query(NotificationTemplate).filter(NotificationTemplate.key == key).first():
         raise ValueError(f"Template key already exists: {key}")
     html_body = sanitize_html_fragment(body_html_template) if body_html_template else None
+    contracted = apply_pa_contract(
+        key=key,
+        channel=channel,
+        subject_template=subject_template,
+        body_plain=body_plain_template,
+        body_html=html_body,
+    )
+    if contracted["pa_contract"]:
+        check = validate_pa_extractable(
+            subject_template=contracted["subject_template"],
+            body_plain=contracted["body_plain_template"],
+            body_html=contracted["body_html_template"],
+        )
+        if not check["ok"]:
+            raise ValueError("; ".join(check["errors"]))
     row = NotificationTemplate(
         key=key,
         name=name.strip() or key,
@@ -151,10 +179,10 @@ def create_template(
         event_type=event_type,
         status="active" if activate else "inactive",
         channel=channel,
-        subject_template=subject_template,
-        body_template=body_plain_template,
-        body_plain_template=body_plain_template,
-        body_html_template=html_body,
+        subject_template=contracted["subject_template"],
+        body_template=contracted["body_plain_template"],
+        body_plain_template=contracted["body_plain_template"],
+        body_html_template=contracted["body_html_template"],
         version=1,
         is_system=False,
         created_by=actor_id,
@@ -207,6 +235,25 @@ def update_template(
         row.body_html_template = (
             sanitize_html_fragment(body_html_template) if body_html_template else None
         )
+    # Protect PA routing contract from body/subject edits (canonical envelope).
+    contracted = apply_pa_contract(
+        key=row.key,
+        channel=row.channel,
+        subject_template=row.subject_template,
+        body_plain=row.body_plain_template or row.body_template or "",
+        body_html=row.body_html_template,
+    )
+    row.subject_template = contracted["subject_template"]
+    row.body_plain_template = contracted["body_plain_template"]
+    row.body_html_template = contracted["body_html_template"]
+    if contracted["pa_contract"]:
+        check = validate_pa_extractable(
+            subject_template=row.subject_template,
+            body_plain=row.body_plain_template or "",
+            body_html=row.body_html_template,
+        )
+        if not check["ok"]:
+            raise ValueError("; ".join(check["errors"]))
     _sync_legacy_body(row)
     row.version = int(row.version or 1) + 1
     row.updated_by = actor_id
@@ -346,12 +393,13 @@ def catalog() -> dict[str, Any]:
         "event_types": EVENT_TYPES,
         "placeholders": PLACEHOLDERS,
         "pa_notes": {
-            "subject_default": "[TEAMS] Maintenance Alert",
-            "routing_line": "To: {{teams_target_email}}",
+            "subject_default": PA_SUBJECT,
+            "routing_line": f"To: {{{{teams_target_email}}}}",
             "routing_meaning": (
                 "The body line To: <email> is consumed by Power Automate as the Teams "
                 "routing address. SMTP To remains the configured bridge mailbox."
             ),
+            "contract_protected": True,
         },
     }
 

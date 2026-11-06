@@ -79,12 +79,15 @@ class SmtpAdapter:
         subject: str,
         body: str,
         body_html: str | None = None,
+        force_capture: bool = False,
     ) -> SendResult:
         settings = get_settings()
-        if not settings.smtp_enabled:
+        # Demo / capture-only path never opens an external SMTP connection.
+        if force_capture or not settings.smtp_enabled:
             msg_id = f"log-{uuid.uuid4().hex[:12]}"
             logger.info(
-                "[SMTP_DISABLED log sink] to=%s subject=%r body=%r id=%s",
+                "[%s] to=%s subject=%r body=%r id=%s",
+                "CAPTURE_ONLY" if force_capture else "SMTP_DISABLED log sink",
                 to,
                 subject,
                 body[:500],
@@ -96,9 +99,13 @@ class SmtpAdapter:
                 body=body,
                 body_html=body_html,
                 msg_id=msg_id,
-                channel="log",
+                channel="capture" if force_capture else "log",
             )
-            return SendResult(ok=True, provider_message_id=msg_id, channel="log")
+            return SendResult(
+                ok=True,
+                provider_message_id=msg_id,
+                channel="capture" if force_capture else "log",
+            )
 
         message = EmailMessage()
         message["From"] = settings.smtp_from

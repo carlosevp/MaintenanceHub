@@ -175,11 +175,15 @@ def test_preview_and_test_send_pa_capture(client, tmp_path, monkeypatch):
     assert send.status_code == 200, send.text
     payload = send.json()
     assert payload["status"] == "sent"
-    assert payload["channel"] in {"log", "bridge"}
+    assert payload["channel"] in {"log", "bridge", "capture"}
     assert payload["subject"] == "[TEAMS] Maintenance Alert"
     assert payload["preview"]["body_plain"].startswith("To: ops-channel@contoso.com")
     assert payload["rendered_payload"]["teams_target_email"] == "ops-channel@contoso.com"
-    assert "PA routing" in payload["note"] or "bridge" in payload["note"].lower()
+    assert payload["teams_delivery_confirmed"] is False
+    assert payload["smtp_to"] == "bridge-mailbox@example.com"
+    assert payload["teams_routing_email"] == "ops-channel@contoso.com"
+    assert payload["smtp_to"] != payload["teams_routing_email"]
+    assert "NOT Teams" in payload["note"] or "not Teams" in payload["note"].lower()
 
     captures = list(Path(tmp_path).glob("*.json"))
     assert captures, "expected MH_NOTIFICATION_CAPTURE_DIR file"
@@ -188,6 +192,70 @@ def test_preview_and_test_send_pa_capture(client, tmp_path, monkeypatch):
     assert captured["body"].startswith("To: ops-channel@contoso.com")
     # SMTP To is bridge mailbox — not the PA routing address
     assert captured["to"] == "bridge-mailbox@example.com"
+
+
+def test_pa_contract_protected_on_save(client):
+    admin = auth_header(client, "admin@test.example.com")
+    # Strip routing line — API must restore canonical envelope
+    patched = client.patch(
+        "/api/v1/notification-templates/pa.teams_alert",
+        headers=admin,
+        json={
+            "subject_template": "changed subject",
+            "body_plain_template": "Title: {{title}}\nOnly content\n",
+            "body_html_template": "<p>{{title}}</p>",
+            "change_note": "attempt strip routing",
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    body = patched.json()
+    assert body["subject_template"] == "[TEAMS] Maintenance Alert"
+    assert (body["body_plain_template"] or "").startswith("To: {{teams_target_email}}")
+    assert "To:" in (body["body_html_template"] or "")
+    assert "teams_target_email" in (body["body_html_template"] or "")
+
+
+def test_retry_keeps_pinned_rendered_version(client, db_session):
+    from maintenancehub_api.domain.notifications import send_delivery
+    from maintenancehub_api.models import DeliveryStatus, NotificationDelivery
+
+    admin = auth_header(client, "admin@test.example.com")
+    send = client.post(
+        "/api/v1/notifications/test",
+        headers=admin,
+        json={
+            "template_key": "pa.teams_alert",
+            "destination_type": "teams_bridge_channel",
+            "destination": "bridge-mailbox@example.com",
+            "bridge_channel_key": "ops",
+            "teams_target_email": "route@example.com",
+            "capture_only": True,
+        },
+    )
+    assert send.status_code == 200, send.text
+    delivery_id = send.json()["delivery_id"]
+    pinned = send.json()["rendered_payload"]["template_version"]
+    pinned_body = send.json()["rendered_payload"]["body_plain"]
+
+    # Bump template version after delivery was created
+    bump = client.patch(
+        "/api/v1/notification-templates/pa.teams_alert",
+        headers=admin,
+        json={"change_note": "post-send edit", "body_plain_template": "To: {{teams_target_email}}\n\nNEW {{title}}\n"},
+    )
+    assert bump.status_code == 200
+    assert bump.json()["version"] > pinned
+
+    row = db_session.get(NotificationDelivery, delivery_id)
+    assert row is not None
+    # Force a re-send path by resetting status while keeping payload
+    row.status = DeliveryStatus.pending
+    db_session.commit()
+    again = send_delivery(db_session, delivery_id)
+    assert again.status == DeliveryStatus.sent
+    assert again.rendered_payload["template_version"] == pinned
+    assert again.rendered_payload["body_plain"] == pinned_body
+    assert "NEW" not in (again.rendered_payload["body_plain"] or "")
 
 
 def test_worker_persists_rendered_payload(client, db_session):
@@ -269,6 +337,7 @@ def test_legacy_bridge_test_still_embeds_channel(client):
             "destination_type": "teams_bridge_channel",
             "destination": "bridge@example.com",
             "bridge_channel_key": "ops-test",
+            "capture_only": True,
         },
         headers=pub,
     )
