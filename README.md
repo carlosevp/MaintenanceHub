@@ -129,6 +129,15 @@ cd packages/banner && npm test
 cd apps/web && npm test
 ```
 
+### Power Automate bridge — integration test (M19)
+
+Full contract + flow setup: [docs/power-automate-templates.md](docs/power-automate-templates.md). Concise procedure:
+
+1. Set `BRIDGE_ENABLED=true`, `BRIDGE_MAILBOX=<pa-inbox>`, and SMTP (`SMTP_ENABLED=true` + host/from/creds). Leave Graph/Teams APIs unset.
+2. In Power Automate: trigger on new mail to the bridge mailbox; condition subject **equals/starts with** `[TEAMS] Maintenance Alert` (admin-configurable filter — no MH code change); parse first **body** line `To: <email>` as Teams route (**not** Outlook To).
+3. Local/demo: `MH_NOTIFICATION_CAPTURE_DIR=./data/notification-capture`, SMTP off → **Administration → Notifications → Test → demo capture** for `pa.teams_alert`. Confirm capture JSON: envelope `to` = bridge mailbox, body starts with `To: <teams route>`, subject `[TEAMS] Maintenance Alert`.
+4. Real path (admin only): Test send with SMTP on → message lands in bridge mailbox → flow posts to Teams. MaintenanceHub `status=sent` means **SMTP acceptance only**, never Teams delivered.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). **`main` is the default base.** Open one focused PR per change — do not stack long feature branches.
