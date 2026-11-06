@@ -50,7 +50,7 @@ const TEMPLATES = [
 export function EventCreatePage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
-  const { can } = useExperience();
+  const { can, defaultTimezone, loading: experienceLoading } = useExperience();
   const reportingOutage = params.get("kind") === "manual_outage";
   const quick = params.get("quick") === "1" || reportingOutage;
   const useImpactFlow = can("impact_analysis") && !quick;
@@ -80,6 +80,7 @@ export function EventCreatePage() {
       return "UTC";
     }
   });
+  const [tzSource, setTzSource] = useState<"browser" | "configured">("browser");
   const [targetKind, setTargetKind] = useState<"application" | "infra_component">("application");
   const [appId, setAppId] = useState("");
   const [envId, setEnvId] = useState("");
@@ -100,6 +101,24 @@ export function EventCreatePage() {
   const [reviewedManuals, setReviewedManuals] = useState<ImpactSeed[]>([]);
   const [draftSaved, setDraftSaved] = useState(false);
 
+  // Apply configured deploy/demo TZ once experience loads (overrides bare UTC browser default).
+  useEffect(() => {
+    if (experienceLoading) return;
+    let browser = "UTC";
+    try {
+      browser = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch {
+      /* keep UTC */
+    }
+    if (defaultTimezone) {
+      setTimezone(defaultTimezone);
+      setTzSource("configured");
+    } else {
+      setTimezone(browser);
+      setTzSource("browser");
+    }
+  }, [defaultTimezone, experienceLoading]);
+
   useEffect(() => {
     void (async () => {
       const [a, e, i] = await Promise.all([
@@ -115,7 +134,6 @@ export function EventCreatePage() {
       if (e.find((x) => x.key === "PROD")) setEnvId(e.find((x) => x.key === "PROD")!.id);
       else if (e[0]) setEnvId(e[0].id);
       // Do not auto-select Oracle/infra for Quick Publish — that conflicts with a simple app window.
-      // Full publish can still pick infra; demo story navigates publishers intentionally.
       try {
         const raw = localStorage.getItem(DRAFT_KEY);
         if (raw && !quick) {
@@ -125,7 +143,10 @@ export function EventCreatePage() {
           if (d.impact) setImpact(d.impact);
           if (d.starts) setStarts(d.starts);
           if (d.ends) setEnds(d.ends);
-          if (d.timezone) setTimezone(d.timezone);
+          if (d.timezone) {
+            setTimezone(d.timezone);
+            setTzSource("browser");
+          }
           if (d.kind) setKind(d.kind);
         }
       } catch {
@@ -467,6 +488,70 @@ export function EventCreatePage() {
                 required
               />
             </div>
+
+            <fieldset className="rounded-lg border border-ink-200 p-3">
+              <legend className="px-1 text-sm font-semibold text-ink">
+                What’s changing
+              </legend>
+              <div className="mb-3">
+                <label className="mh-label" htmlFor="targetKind">
+                  Target
+                </label>
+                <select
+                  id="targetKind"
+                  className="mh-input"
+                  value={targetKind}
+                  onChange={(e) => setTargetKind(e.target.value as "application" | "infra_component")}
+                >
+                  <option value="application">Application</option>
+                  {!quick && <option value="infra_component">Infrastructure</option>}
+                </select>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {targetKind === "application" ? (
+                  <select
+                    className="mh-input"
+                    value={appId}
+                    onChange={(e) => setAppId(e.target.value)}
+                    required
+                    aria-label="Application"
+                  >
+                    {apps.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name.replace("[DEMO] ", "")}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <select
+                    className="mh-input"
+                    value={infraId}
+                    onChange={(e) => setInfraId(e.target.value)}
+                    required
+                    aria-label="Infrastructure component"
+                  >
+                    {infra.map((i) => (
+                      <option key={i.id} value={i.id}>
+                        {i.name.replace("[DEMO] ", "")}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <select
+                  className="mh-input"
+                  value={envId}
+                  onChange={(e) => setEnvId(e.target.value)}
+                  aria-label="Environment"
+                >
+                  {envs.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {e.key} — {e.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </fieldset>
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="mh-label" htmlFor="starts">
@@ -503,10 +588,15 @@ export function EventCreatePage() {
                 id="tz"
                 className="mh-input"
                 value={timezone}
-                onChange={(e) => setTimezone(e.target.value)}
+                onChange={(e) => {
+                  setTimezone(e.target.value);
+                  setTzSource("browser");
+                }}
               />
               <p className="mt-1 text-xs text-ink-muted">
-                Defaults to your browser/deploy zone ({timezone}). Times above are interpreted here.
+                {tzSource === "configured"
+                  ? `Using configured demo/deploy zone ${timezone}. Change if your window is elsewhere.`
+                  : `Using your browser zone (${timezone}). Times above are interpreted here.`}
               </p>
             </div>
             <div>
@@ -567,96 +657,38 @@ export function EventCreatePage() {
                     Shared infrastructure impact analysis is available on the next step after details.
                   </p>
                 )}
+                <fieldset className="rounded-lg border border-dashed border-ink-200 p-3">
+                  <legend className="px-1 text-xs font-semibold tracking-wide text-ink-muted">
+                    Optional second app
+                  </legend>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <select
+                      className="mh-input"
+                      value={appId2}
+                      onChange={(e) => setAppId2(e.target.value)}
+                    >
+                      <option value="">None</option>
+                      {apps.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name.replace("[DEMO] ", "")}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      className="mh-input"
+                      value={envId2}
+                      onChange={(e) => setEnvId2(e.target.value)}
+                    >
+                      <option value="">—</option>
+                      {envs.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.key}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </fieldset>
               </div>
-            )}
-
-            <fieldset className="rounded-lg border border-ink-200 p-3">
-              <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-muted">
-                What’s changing
-              </legend>
-              <div className="mb-3">
-                <label className="mh-label" htmlFor="targetKind">
-                  Target
-                </label>
-                <select
-                  id="targetKind"
-                  className="mh-input"
-                  value={targetKind}
-                  onChange={(e) => setTargetKind(e.target.value as "application" | "infra_component")}
-                >
-                  <option value="application">Application</option>
-                  {!quick && <option value="infra_component">Infrastructure</option>}
-                </select>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {targetKind === "application" ? (
-                  <select
-                    className="mh-input"
-                    value={appId}
-                    onChange={(e) => setAppId(e.target.value)}
-                    required
-                    aria-label="Application"
-                  >
-                    {apps.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <select
-                    className="mh-input"
-                    value={infraId}
-                    onChange={(e) => setInfraId(e.target.value)}
-                    required
-                    aria-label="Infrastructure component"
-                  >
-                    {infra.map((i) => (
-                      <option key={i.id} value={i.id}>
-                        {i.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <select
-                  className="mh-input"
-                  value={envId}
-                  onChange={(e) => setEnvId(e.target.value)}
-                  aria-label="Environment"
-                >
-                  {envs.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.key} — {e.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </fieldset>
-
-            {showMore && (
-              <fieldset className="rounded-lg border border-dashed border-ink-200 p-3">
-                <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-ink-muted">
-                  Optional second app
-                </legend>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <select className="mh-input" value={appId2} onChange={(e) => setAppId2(e.target.value)}>
-                    <option value="">None</option>
-                    {apps.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
-                  <select className="mh-input" value={envId2} onChange={(e) => setEnvId2(e.target.value)}>
-                    <option value="">—</option>
-                    {envs.map((e) => (
-                      <option key={e.id} value={e.id}>
-                        {e.key}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </fieldset>
             )}
 
             {error && (

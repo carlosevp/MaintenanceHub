@@ -91,15 +91,24 @@ def is_upcoming_scheduled(
     starts_at: datetime,
     status: EventStatus | None = None,
 ) -> bool:
-    """Future confirmed scheduled activity (not approved-only, not terminal)."""
+    """Future confirmed/approved activity that is not yet executing.
+
+    Per-occurrence status only: an ``in_progress`` sibling must never make a
+    later occurrence appear as \"In progress\" on Coming up. Executing statuses
+    belong in the current strip when their own window overlaps now.
+    """
     effective = status if status is not None else event.status
-    phase = communication_phase(event, now=now, status=effective)
-    if phase not in {PHASE_SCHEDULED, PHASE_EXECUTING}:
-        # approved_window future still useful on calendar; dashboard upcoming includes it
-        # as non-executing communication — include approved upcoming separately
-        if phase == PHASE_APPROVED_WINDOW and ensure_utc(starts_at) > ensure_utc(now):
-            return True
+    if effective in {
+        EventStatus.completed,
+        EventStatus.cancelled,
+        EventStatus.in_progress,
+        EventStatus.extended,
+        EventStatus.verifying,
+    }:
         return False
-    if effective in {EventStatus.completed, EventStatus.cancelled}:
+    phase = communication_phase(event, now=now, status=effective)
+    if phase == PHASE_APPROVED_WINDOW:
+        return ensure_utc(starts_at) > ensure_utc(now)
+    if phase != PHASE_SCHEDULED:
         return False
     return ensure_utc(starts_at) > ensure_utc(now)

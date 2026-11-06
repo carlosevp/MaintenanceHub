@@ -46,6 +46,8 @@ export SERVICENOW_ENABLED=false
 export JWT_SECRET="${JWT_SECRET:-change-me-local-dev-only}"
 export PUBLIC_BASE_URL="http://127.0.0.1:${API_PORT}"
 export MH_NOTIFICATION_CAPTURE_DIR="$ROOT/data/notification-capture"
+# Prefer a real org TZ for demos — headless agents often report browser TZ as UTC.
+export MH_DEFAULT_TIMEZONE="${MH_DEFAULT_TIMEZONE:-America/Chicago}"
 
 echo "==> Migrating ($DB_URL)"
 alembic -c db/alembic.ini upgrade head

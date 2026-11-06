@@ -1,11 +1,23 @@
 import { format, formatDistanceStrict, parseISO } from "date-fns";
 
-function userTimeZone(): string {
+function browserTimeZone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   } catch {
     return "UTC";
   }
+}
+
+/** Prefer configured deploy/demo zone when browser reports bare UTC (common in agents). */
+export function resolveDisplayTimeZone(configured?: string | null): string {
+  const browser = browserTimeZone();
+  const cfg = configured?.trim();
+  if (cfg) return cfg;
+  return browser;
+}
+
+function userTimeZone(): string {
+  return browserTimeZone();
 }
 
 /** Human wall time in the viewer's timezone (falls back to event TZ hint). */

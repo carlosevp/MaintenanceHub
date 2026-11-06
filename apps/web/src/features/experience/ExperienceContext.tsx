@@ -25,6 +25,8 @@ export type ExperienceState = {
   label: string;
   capabilities: ExperienceCapabilities;
   scenarios: DemoScenario[];
+  /** Deploy/demo configured IANA zone from MH_DEFAULT_TIMEZONE, if any. */
+  defaultTimezone: string | null;
   activeScenarioId: string | null;
   setActiveScenarioId: (id: string | null) => void;
   activeScenario: DemoScenario | null;
@@ -61,6 +63,7 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
   const [label, setLabel] = useState("Essentials");
   const [capabilities, setCapabilities] = useState<ExperienceCapabilities>(DEFAULT_CAPS);
   const [scenarios, setScenarios] = useState<DemoScenario[]>([]);
+  const [defaultTimezone, setDefaultTimezone] = useState<string | null>(null);
   const [activeScenarioId, setActiveScenarioId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -73,11 +76,13 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
         label: string;
         capabilities: ExperienceCapabilities;
         scenarios?: DemoScenario[];
+        default_timezone?: string | null;
       };
       setProfile(body.profile);
       setLabel(body.label);
       setCapabilities(body.capabilities);
       setScenarios(body.scenarios ?? []);
+      setDefaultTimezone(body.default_timezone?.trim() || null);
     } catch {
       /* keep Essentials defaults — never unlock Enterprise silently */
     } finally {
@@ -105,6 +110,7 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
       label,
       capabilities,
       scenarios,
+      defaultTimezone,
       activeScenarioId,
       setActiveScenarioId,
       activeScenario,
@@ -117,6 +123,7 @@ export function ExperienceProvider({ children }: { children: ReactNode }) {
       label,
       capabilities,
       scenarios,
+      defaultTimezone,
       activeScenarioId,
       activeScenario,
       loading,

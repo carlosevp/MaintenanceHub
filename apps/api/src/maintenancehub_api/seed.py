@@ -488,17 +488,19 @@ def seed_demo(db: Session) -> None:
     from zoneinfo import ZoneInfo
 
     chi = ZoneInfo("America/Chicago")
-    # Next Sunday 02:00 Chicago
+    # Anchor RRULE on last Sunday so a prior occurrence can hold executing state
+    # without forcing the next future Sunday (e.g. Nov 8) to appear In progress.
     local_now = now.astimezone(chi)
-    days_ahead = (6 - local_now.weekday()) % 7  # Sunday=6 in weekday()
-    if days_ahead == 0 and local_now.hour >= 2:
-        days_ahead = 7
-    next_sun = (local_now + timedelta(days=days_ahead)).replace(
+    days_since_sun = (local_now.weekday() + 1) % 7  # Mon=0 … Sun=6 → days since Sunday
+    this_sun = (local_now - timedelta(days=days_since_sun)).replace(
         hour=2, minute=0, second=0, microsecond=0
     )
-    recur_start = next_sun.astimezone(timezone.utc)
-    recur_end = (next_sun + timedelta(hours=2)).astimezone(timezone.utc)
-    until_local = next_sun + timedelta(weeks=12)
+    if local_now < this_sun:
+        this_sun -= timedelta(days=7)
+    series_anchor = this_sun - timedelta(weeks=1)  # DTSTART = prior Sunday
+    recur_start = series_anchor.astimezone(timezone.utc)
+    recur_end = (series_anchor + timedelta(hours=2)).astimezone(timezone.utc)
+    until_local = this_sun + timedelta(weeks=12)
     recurring = event_service.create_event(
         db,
         data={
@@ -530,42 +532,52 @@ def seed_demo(db: Session) -> None:
     from maintenancehub_api.domain import occurrences as occurrence_service
     from maintenancehub_api.domain import recurrence as recurrence_service
 
-    occs = recurrence_service.expand_event_occurrences(
+    # Include a prior Sunday so executing state lives on that slot only —
+    # the next future Sunday (e.g. Nov 8) must remain scheduled.
+    hist = recurrence_service.expand_event_occurrences(
         recurring,
-        range_start=recur_start - timedelta(seconds=1),
+        range_start=recur_start - timedelta(days=14),
         range_end=recur_start + timedelta(days=28),
     )
-    if len(occs) >= 1:
-        # First upcoming occurrence: mark in progress (human-published executing)
+    past = [o for o in hist if o.starts_at <= now]
+    future = [o for o in hist if o.starts_at > now]
+    if past:
+        prior = past[-1]
         occurrence_service.transition_occurrence(
             db,
             recurring,
-            original_starts_at=occs[0].original_starts_at,
+            original_starts_at=prior.original_starts_at,
             target_status=EventStatus.in_progress,
             actor_id=publisher.id,
-            note="[DEMO] Occurrence started",
+            note="[DEMO] Prior occurrence started",
         )
         recurring = event_service.get_event(db, recurring.id)
-    if len(occs) >= 2:
-        # Second: leave scheduled but cancel the third as a skip if present
-        pass
-    if len(occs) >= 3:
+        if prior.ends_at < now:
+            occurrence_service.transition_occurrence(
+                db,
+                recurring,
+                original_starts_at=prior.original_starts_at,
+                target_status=EventStatus.extended,
+                actor_id=publisher.id,
+                note="[DEMO] Prior occurrence still open past window",
+            )
+            recurring = event_service.get_event(db, recurring.id)
+    if len(future) >= 3:
         occurrence_service.cancel_occurrence(
             db,
             recurring,
-            original_starts_at=occs[2].original_starts_at,
+            original_starts_at=future[2].original_starts_at,
             actor_id=publisher.id,
             note="[DEMO] Skipped occurrence",
         )
         recurring = event_service.get_event(db, recurring.id)
-    if len(occs) >= 2:
-        # Second occurrence stays scheduled — contrast with first (in_progress)
+    if future:
         occurrence_service.patch_occurrence(
             db,
             recurring,
-            original_starts_at=occs[1].original_starts_at,
+            original_starts_at=future[0].original_starts_at,
             actor_id=publisher.id,
-            description="[DEMO] Still scheduled — independent of sibling in progress",
+            description="[DEMO] Next window — still scheduled (not inherited from prior occ)",
         )
 
     # Approved-window recurring series (not confirmed — reminders should not fire)

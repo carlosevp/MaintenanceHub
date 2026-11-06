@@ -186,12 +186,18 @@ def scenarios_for(profile: str | None) -> list[dict[str, Any]]:
 
 
 def experience_payload(profile: str | None) -> dict[str, Any]:
+    import os
+
     p = normalize_profile(profile)
+    # Optional deploy/demo default (e.g. America/Chicago). UI prefers this over a
+    # bare UTC browser default common in headless/cloud agents.
+    configured_tz = (os.environ.get("MH_DEFAULT_TIMEZONE") or "").strip() or None
     return {
         "profile": p,
         "label": _PROFILE_LABELS[p],
         "capabilities": capabilities_for(p),
         "scenarios": scenarios_for(p),
+        "default_timezone": configured_tz,
         "note": (
             "Experience profile is set via EXPERIENCE_PROFILE at deploy/demo time. "
             "Demo scenario selection is presentation-only and cannot unlock APIs. "
