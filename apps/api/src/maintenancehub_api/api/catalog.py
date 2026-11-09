@@ -29,6 +29,7 @@ from maintenancehub_api.schemas.catalog import (
     DependencyOut,
     EnvironmentCreate,
     EnvironmentOut,
+    EnvironmentUpdate,
     ExternalCiLinkIn,
     ExternalCiLinkOut,
     InfraComponentOut,
@@ -51,8 +52,12 @@ def _app_out(app: Application) -> ApplicationOut:
 def list_environments(
     db: Session = Depends(get_db),
     _: AuthUser = Depends(get_current_user),
+    include_inactive: bool = Query(False),
 ) -> list[Environment]:
-    return db.query(Environment).order_by(Environment.sort_order, Environment.key).all()
+    query = db.query(Environment)
+    if not include_inactive:
+        query = query.filter(Environment.is_active.is_(True))
+    return query.order_by(Environment.sort_order, Environment.key).all()
 
 
 @router.post("/environments", response_model=EnvironmentOut, status_code=201)
@@ -61,10 +66,57 @@ def create_environment(
     db: Session = Depends(get_db),
     _: AuthUser = Depends(require_roles("platform_administrator", "publisher")),
 ) -> Environment:
-    if db.query(Environment).filter(Environment.key == body.key).first():
-        raise HTTPException(status_code=409, detail="Environment key already exists")
-    env = Environment(key=body.key, name=body.name, sort_order=body.sort_order)
+    key = body.key.strip().upper()
+    if db.query(Environment).filter(Environment.key == key).first():
+        raise HTTPException(status_code=409, detail="Environment code already exists")
+    env = Environment(
+        key=key,
+        name=body.name.strip(),
+        description=body.description,
+        sort_order=body.sort_order,
+        is_active=body.is_active,
+    )
     db.add(env)
+    db.commit()
+    db.refresh(env)
+    return env
+
+
+@router.patch("/environments/{env_id}", response_model=EnvironmentOut)
+def update_environment(
+    env_id: str,
+    body: EnvironmentUpdate,
+    db: Session = Depends(get_db),
+    _: AuthUser = Depends(require_roles("platform_administrator")),
+) -> Environment:
+    env = db.get(Environment, env_id)
+    if not env:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    data = body.model_dump(exclude_unset=True)
+    if "name" in data and data["name"] is not None:
+        env.name = data["name"].strip()
+    if "description" in data:
+        env.description = data["description"]
+    if "sort_order" in data and data["sort_order"] is not None:
+        env.sort_order = data["sort_order"]
+    if "is_active" in data and data["is_active"] is not None:
+        env.is_active = data["is_active"]
+    db.commit()
+    db.refresh(env)
+    return env
+
+
+@router.post("/environments/{env_id}/deactivate", response_model=EnvironmentOut)
+def deactivate_environment(
+    env_id: str,
+    db: Session = Depends(get_db),
+    _: AuthUser = Depends(require_roles("platform_administrator")),
+) -> Environment:
+    """Prefer deactivate over delete so historical impacts keep stable identities."""
+    env = db.get(Environment, env_id)
+    if not env:
+        raise HTTPException(status_code=404, detail="Environment not found")
+    env.is_active = False
     db.commit()
     db.refresh(env)
     return env

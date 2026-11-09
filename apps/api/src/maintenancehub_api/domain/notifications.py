@@ -359,7 +359,11 @@ def enqueue_deliveries_for_event(
 
     settings = get_settings()
     created = 0
+    from maintenancehub_api.domain.subscription_display import subscription_allows_lifecycle
+
     for sub in matching_subscriptions(db, event, record=record):
+        if not subscription_allows_lifecycle(sub, template_key=template_key, reason=reason):
+            continue
         sub_extra = dict(extra_context or {})
         if sub.destination_type == "teams_bridge_channel":
             channel = "bridge"

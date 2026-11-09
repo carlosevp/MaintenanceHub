@@ -1,16 +1,70 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from maintenancehub_api.config import get_settings
 from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, get_current_user
 from maintenancehub_api.domain import ics as ics_service
-from maintenancehub_api.models import CalendarToken
-from maintenancehub_api.schemas.subscriptions import CalendarTokenCreate, CalendarTokenCreated, CalendarTokenOut
+from maintenancehub_api.domain.calendar_reachability import assess_public_base_url
+from maintenancehub_api.models import CalendarToken, MaintenanceEvent
+from maintenancehub_api.schemas.subscriptions import (
+    CalendarFeedReachability,
+    CalendarTokenCreate,
+    CalendarTokenCreated,
+    CalendarTokenOut,
+)
 
 router = APIRouter(tags=["calendar-tokens"])
+
+
+def _reachability() -> CalendarFeedReachability:
+    return CalendarFeedReachability.model_validate(
+        assess_public_base_url(get_settings().public_base_url)
+    )
+
+
+@router.get("/calendar/reachability", response_model=CalendarFeedReachability)
+def calendar_reachability(
+    _: AuthUser = Depends(get_current_user),
+) -> CalendarFeedReachability:
+    return _reachability()
+
+
+@router.get("/calendar/download.ics")
+def download_ics(
+    db: Session = Depends(get_db),
+    user: AuthUser = Depends(get_current_user),
+) -> Response:
+    """Authenticated static ICS snapshot for the caller's favorites + subscriptions.
+
+    No public calendar endpoint is required. Snapshot is not auto-updated.
+    """
+    events = ics_service.events_for_user(
+        db,
+        user.id,
+        scopes=["favorites", "subscriptions"],
+        include_cancelled=True,
+    )
+    if events:
+        ids = [e.id for e in events]
+        events = (
+            db.query(MaintenanceEvent)
+            .options(joinedload(MaintenanceEvent.recurrence_rule))
+            .filter(MaintenanceEvent.id.in_(ids))
+            .order_by(MaintenanceEvent.starts_at.asc())
+            .all()
+        )
+    body = ics_service.build_ics(events, calendar_name="MaintenanceHub")
+    return Response(
+        content=body,
+        media_type="text/calendar; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="maintenancehub-calendar.ics"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.post("/calendar-tokens", response_model=CalendarTokenCreated, status_code=201)
@@ -22,7 +76,9 @@ def create_token(
     row, raw = ics_service.create_calendar_token(
         db, user_id=user.id, scopes=body.scopes, label=body.label
     )
-    base = get_settings().public_base_url.rstrip("/")
+    reach = _reachability()
+    base = (get_settings().public_base_url or "").rstrip("/")
+    feed_url = f"{base}/api/v1/public/ics/{raw}" if base else f"/api/v1/public/ics/{raw}"
     return CalendarTokenCreated(
         id=row.id,
         scopes=row.scopes or [],
@@ -31,7 +87,8 @@ def create_token(
         revoked_at=None,
         created_at=row.created_at.isoformat() if row.created_at else None,
         token=raw,
-        feed_url=f"{base}/api/v1/public/ics/{raw}",
+        feed_url=feed_url,
+        reachability=reach,
     )
 
 
@@ -75,10 +132,6 @@ def public_ics(token: str, db: Session = Depends(get_db)) -> Response:
     if not row:
         raise HTTPException(status_code=401, detail="Invalid or revoked calendar token")
     events = ics_service.events_for_token(db, row)
-    # Load recurrence for RRULE emission
-    from sqlalchemy.orm import joinedload
-    from maintenancehub_api.models import MaintenanceEvent
-
     if events:
         ids = [e.id for e in events]
         events = (

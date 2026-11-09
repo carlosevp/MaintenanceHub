@@ -11,13 +11,24 @@ class EnvironmentOut(ORMModel):
     id: str
     key: str
     name: str
+    description: Optional[str] = None
     sort_order: int
+    is_active: bool = True
 
 
 class EnvironmentCreate(BaseModel):
     key: str = Field(min_length=1, max_length=50)
     name: str = Field(min_length=1, max_length=100)
+    description: Optional[str] = None
     sort_order: int = 0
+    is_active: bool = True
+
+
+class EnvironmentUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    description: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
 
 
 class AppEnvironmentIn(BaseModel):

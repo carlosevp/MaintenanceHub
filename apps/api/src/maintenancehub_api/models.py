@@ -257,12 +257,21 @@ class InfraComponent(Base):
 
 
 class Environment(Base):
+    """Global environment definition (catalog).
+
+    Distinct from ``AppEnvironment`` (an application's deployment instance of a
+    definition, e.g. Claims/INT). Prefer ``is_active=False`` over delete when
+    historical impacts/subscriptions still reference the row.
+    """
+
     __tablename__ = "environments"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     key: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class AppEnvironment(Base):
@@ -679,6 +688,9 @@ class Favorite(Base):
     user: Mapped[User] = relationship(back_populates="favorites")
 
 
+DEFAULT_NOTIFY_EVENTS = ("start", "extension", "cancellation", "completion")
+
+
 class Subscription(Base):
     __tablename__ = "subscriptions"
 
@@ -691,6 +703,9 @@ class Subscription(Base):
     destination: Mapped[str] = mapped_column(String(320), nullable=False)
     # For teams_bridge_channel: routing key embedded in subject
     bridge_channel_key: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    # Lifecycle interests: start | extension | cancellation | completion (JSON list).
+    # Empty/null means all (backward compatible).
+    notify_events: Mapped[Any] = mapped_column(JSON, nullable=True, default=list)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

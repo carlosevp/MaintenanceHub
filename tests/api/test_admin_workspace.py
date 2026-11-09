@@ -126,7 +126,11 @@ def test_dependency_self_ref_and_duplicate_rejected(client, db_session):
         },
     )
     assert created.status_code == 201, created.text
-    assert "Consumer depends on Provider" in created.json()["description"]
+    desc = created.json()["description"]
+    assert "consumer may also be impacted" in desc.lower()
+    assert "depends on" in desc.lower()
+    assert "Dep A" in created.json()["summary"]
+    assert "Dep B" in created.json()["summary"]
 
     dup = client.post(
         "/api/v1/admin/dependencies",

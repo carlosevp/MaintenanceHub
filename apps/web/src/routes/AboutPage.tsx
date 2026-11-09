@@ -26,7 +26,11 @@ export function AboutPage() {
             Consumer status pages are authenticated (viewer-permitted); not anonymous public AD
             status
           </li>
-          <li>ICS feeds refresh on client poll — not push-realtime</li>
+          <li>
+            ICS subscription feeds refresh on client poll — not push-realtime. Outlook on the web
+            needs a Microsoft-reachable HTTPS <code>PUBLIC_BASE_URL</code>; otherwise use Download
+            calendar (<code>.ics</code>) on My Alerts (static snapshot).
+          </li>
           <li>
             Experience profile is deploy-time (<code>EXPERIENCE_PROFILE</code>); Essentials omits
             integrations/admin

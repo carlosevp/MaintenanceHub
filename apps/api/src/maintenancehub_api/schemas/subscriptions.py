@@ -16,6 +16,16 @@ class TargetOut(ORMModel):
     id: str
     target_type: str
     target_id: str
+    application_id: Optional[str] = None
+    application_name: Optional[str] = None
+    application_key: Optional[str] = None
+    environment_id: Optional[str] = None
+    environment_name: Optional[str] = None
+    environment_key: Optional[str] = None
+    event_title: Optional[str] = None
+    label: str = ""
+    scope_label: str = ""
+    missing: bool = False
 
 
 class ReminderIn(BaseModel):
@@ -25,6 +35,7 @@ class ReminderIn(BaseModel):
 class ReminderOut(ORMModel):
     id: str
     offset_minutes: int
+    label: Optional[str] = None
 
 
 class SubscriptionCreate(BaseModel):
@@ -34,6 +45,10 @@ class SubscriptionCreate(BaseModel):
     digest_mode: str = "none"
     targets: list[TargetIn] = Field(default_factory=list)
     reminders: list[ReminderIn] = Field(default_factory=list)
+    # start | extension | cancellation | completion
+    notify_events: list[str] = Field(
+        default_factory=lambda: ["start", "extension", "cancellation", "completion"]
+    )
 
 
 class SubscriptionUpdate(BaseModel):
@@ -42,6 +57,9 @@ class SubscriptionUpdate(BaseModel):
     destination: Optional[str] = None
     bridge_channel_key: Optional[str] = None
     digest_mode: Optional[str] = None
+    notify_events: Optional[list[str]] = None
+    targets: Optional[list[TargetIn]] = None
+    reminders: Optional[list[ReminderIn]] = None
 
 
 class SubscriptionOut(ORMModel):
@@ -52,6 +70,9 @@ class SubscriptionOut(ORMModel):
     destination_type: str
     destination: str
     bridge_channel_key: Optional[str] = None
+    notify_events: list[str] = Field(default_factory=list)
+    notify_event_labels: list[str] = Field(default_factory=list)
+    channel_label: str = "Email"
     targets: list[TargetOut] = Field(default_factory=list)
     reminders: list[ReminderOut] = Field(default_factory=list)
 
@@ -153,6 +174,16 @@ class CalendarTokenCreate(BaseModel):
     label: Optional[str] = None
 
 
+class CalendarFeedReachability(BaseModel):
+    base_url: Optional[str] = None
+    configured: bool = False
+    https: bool = False
+    microsoft_cloud_reachable: bool = False
+    subscription_supported: bool = False
+    code: str = "missing"
+    message: str = ""
+
+
 class CalendarTokenOut(ORMModel):
     id: str
     scopes: list
@@ -165,6 +196,7 @@ class CalendarTokenOut(ORMModel):
 class CalendarTokenCreated(CalendarTokenOut):
     token: str  # raw secret once
     feed_url: str
+    reachability: Optional[CalendarFeedReachability] = None
 
 
 class JobOut(ORMModel):
