@@ -181,6 +181,36 @@ def events_for_token(db: Session, token: CalendarToken) -> list[MaintenanceEvent
     )
 
 
+def events_for_application(
+    db: Session,
+    application_id: str,
+    *,
+    include_cancelled: bool = True,
+) -> list[MaintenanceEvent]:
+    """Events impacting a single application (any environment)."""
+    impact_event_ids = (
+        db.query(EventImpact.event_id)
+        .filter(
+            EventImpact.target_type == ImpactTargetType.application,
+            EventImpact.target_id == application_id,
+        )
+        .all()
+    )
+    matched_ids = {r[0] for r in impact_event_ids}
+    if not matched_ids:
+        return []
+    q = (
+        db.query(MaintenanceEvent)
+        .options(
+            joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions)
+        )
+        .filter(MaintenanceEvent.id.in_(matched_ids))
+    )
+    if not include_cancelled:
+        q = q.filter(MaintenanceEvent.status != EventStatus.cancelled)
+    return q.order_by(MaintenanceEvent.starts_at.asc()).limit(500).all()
+
+
 def _fmt_dt(dt: datetime) -> str:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
@@ -225,19 +255,34 @@ def build_ics(
     now = _fmt_dt(datetime.now(timezone.utc))
     for event in events:
         uid = series_uid(event.id)
+        is_approved_window = event.approval_state.value == "approved_window"
+        is_cancelled = event.status == EventStatus.cancelled
+        # Confirmed maintenance → CONFIRMED; approved (unconfirmed) windows → TENTATIVE.
+        if is_cancelled:
+            status = "CANCELLED"
+        elif is_approved_window:
+            status = "TENTATIVE"
+        else:
+            status = "CONFIRMED"
+        title = event.title
+        if is_approved_window and not is_cancelled:
+            title = f"[Approved window] {event.title}"
+        elif status == "CONFIRMED":
+            # Keep titles readable; approval called out in DESCRIPTION.
+            pass
         desc_parts = [
             event.description or "",
             f"Status: {event.status.value}",
-            f"Approval: {event.approval_state.value}",
+            (
+                "Approval: approved_window (tentative — not yet confirmed maintenance)"
+                if is_approved_window
+                else "Approval: confirmed_scheduled (confirmed maintenance)"
+            ),
             f"Kind: {event.kind.value}",
         ]
         if event.expected_impact:
             desc_parts.append(f"Impact: {event.expected_impact}")
         description = _escape("\n".join(p for p in desc_parts if p))
-        status = "CANCELLED" if event.status == EventStatus.cancelled else "CONFIRMED"
-        # Approved windows are still published as tentative in ICS when not confirmed
-        if event.approval_state.value == "approved_window" and status == "CONFIRMED":
-            status = "TENTATIVE"
 
         lines.extend(
             [
@@ -246,7 +291,7 @@ def build_ics(
                 f"DTSTAMP:{now}",
                 f"DTSTART:{_fmt_dt(event.starts_at)}",
                 f"DTEND:{_fmt_dt(event.ends_at)}",
-                f"SUMMARY:{_escape(event.title)}",
+                f"SUMMARY:{_escape(title)}",
                 f"DESCRIPTION:{description}",
                 f"STATUS:{status}",
             ]
@@ -273,7 +318,7 @@ def build_ics(
                         f"RECURRENCE-ID:{_fmt_dt(ensure_utc(ex.original_starts_at))}",
                         f"DTSTART:{_fmt_dt(ensure_utc(ex.new_starts_at))}",
                         f"DTEND:{_fmt_dt(ensure_utc(ex.new_ends_at))}",
-                        f"SUMMARY:{_escape(event.title)}",
+                        f"SUMMARY:{_escape(title)}",
                         f"DESCRIPTION:{description}",
                         f"STATUS:{status}",
                         "END:VEVENT",

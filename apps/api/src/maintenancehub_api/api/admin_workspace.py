@@ -380,12 +380,10 @@ def _dependency_summary(
     provider = _subject_label(db, to_type, to_id)
     from_env_name, from_env_key = _env_label(db, from_environment_id)
     to_env_name, to_env_key = _env_label(db, to_environment_id)
-    consumer_side = consumer
-    if from_env_key:
-        consumer_side = f"{consumer} {from_env_key}"
-    provider_side = provider
-    if to_env_key:
-        provider_side = f"{provider} {to_env_key}"
+    # Null environment_id means deliberately environment-agnostic (matches any env),
+    # not an unknown/missing environment.
+    consumer_side = f"{consumer} {from_env_key}" if from_env_key else f"{consumer} (all environments)"
+    provider_side = f"{provider} {to_env_key}" if to_env_key else f"{provider} (all environments)"
     summary = f"{consumer_side} → depends on → {provider_side}"
     return {
         "consumer_label": consumer,
@@ -394,10 +392,17 @@ def _dependency_summary(
         "from_environment_key": from_env_key,
         "to_environment_name": to_env_name,
         "to_environment_key": to_env_key,
+        "from_environment_agnostic": from_environment_id is None,
+        "to_environment_agnostic": to_environment_id is None,
         "summary": summary,
         "description": (
             "If the provider is affected by maintenance, the consumer may also be impacted. "
             + summary
+            + (
+                " Blank environment sides are agnostic (apply to all environments), not unknown."
+                if from_environment_id is None or to_environment_id is None
+                else ""
+            )
         ),
         "cross_environment": bool(
             from_environment_id

@@ -21,7 +21,7 @@ Authorization is enforced by the API (`platform_administrator`). Hiding nav is n
 **Runtime-editable in the Administration UI (via API):**
 
 - Environment catalog definitions (code, display name, description, sort order, active/inactive). Prefer deactivate over delete when referenced. Distinct from per-application deployment instances (`AppEnvironment`).
-- Manual dependency edges (incl. cross-environment); consumer app grant required for non-admins. Direction is always Consumer depends on Provider — if the provider is affected, the consumer may also be impacted.
+- Manual dependency edges (incl. cross-environment); consumer app grant required for non-admins. Direction is always Consumer depends on Provider — if the provider is affected, the consumer may also be impacted. Leaving environment blank means **environment-agnostic** (matches all environments on that side), not “unknown.”
 - Infra component create
 - Support groups / catalog objects already exposed by catalog APIs
 - CSV import preview/commit (`import_mode` recorded; absences never deleted)

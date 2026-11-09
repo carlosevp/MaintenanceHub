@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session, joinedload
 
 from maintenancehub_api.config import get_settings
@@ -8,7 +8,7 @@ from maintenancehub_api.db import get_db
 from maintenancehub_api.deps import AuthUser, get_current_user
 from maintenancehub_api.domain import ics as ics_service
 from maintenancehub_api.domain.calendar_reachability import assess_public_base_url
-from maintenancehub_api.models import CalendarToken, MaintenanceEvent
+from maintenancehub_api.models import Application, CalendarToken, MaintenanceEvent
 from maintenancehub_api.schemas.subscriptions import (
     CalendarFeedReachability,
     CalendarTokenCreate,
@@ -36,17 +36,36 @@ def calendar_reachability(
 def download_ics(
     db: Session = Depends(get_db),
     user: AuthUser = Depends(get_current_user),
+    application_id: str | None = Query(
+        default=None,
+        description="Optional: download events for one application instead of favorites+subscriptions.",
+    ),
 ) -> Response:
-    """Authenticated static ICS snapshot for the caller's favorites + subscriptions.
+    """Authenticated static ICS snapshot.
 
-    No public calendar endpoint is required. Snapshot is not auto-updated.
+    Default scope: favorites + active subscriptions. With ``application_id``, scope is
+    that application's impacts only (safe reuse of ICS generation). Empty scope still
+    returns a valid empty calendar. Snapshot is not auto-updated.
     """
-    events = ics_service.events_for_user(
-        db,
-        user.id,
-        scopes=["favorites", "subscriptions"],
-        include_cancelled=True,
-    )
+    cal_name = "MaintenanceHub"
+    filename = "maintenancehub-calendar.ics"
+    if application_id:
+        app = db.get(Application, application_id)
+        if not app:
+            raise HTTPException(status_code=404, detail="Application not found")
+        events = ics_service.events_for_application(
+            db, application_id, include_cancelled=True
+        )
+        cal_name = f"MaintenanceHub — {app.name}"
+        safe_key = "".join(c if c.isalnum() or c in "-_" else "-" for c in app.key) or "app"
+        filename = f"maintenancehub-{safe_key}.ics"
+    else:
+        events = ics_service.events_for_user(
+            db,
+            user.id,
+            scopes=["favorites", "subscriptions"],
+            include_cancelled=True,
+        )
     if events:
         ids = [e.id for e in events]
         events = (
@@ -56,13 +75,14 @@ def download_ics(
             .order_by(MaintenanceEvent.starts_at.asc())
             .all()
         )
-    body = ics_service.build_ics(events, calendar_name="MaintenanceHub")
+    body = ics_service.build_ics(events, calendar_name=cal_name)
     return Response(
         content=body,
         media_type="text/calendar; charset=utf-8",
         headers={
-            "Content-Disposition": 'attachment; filename="maintenancehub-calendar.ics"',
+            "Content-Disposition": f'attachment; filename="{filename}"',
             "Cache-Control": "no-store",
+            "X-MH-Calendar-Event-Count": str(len(events)),
         },
     )
 

@@ -25,7 +25,9 @@ Create a tokenized ICS feed scoped to your favorites and subscriptions. Revoke a
 
 ### Option B: Download calendar (`.ics`)
 
-Use **Download calendar (.ics)** for an authenticated snapshot of upcoming maintenance for your subscriptions. No public calendar endpoint is required.
+Use **Download calendar (.ics)** for an authenticated snapshot. Default scope is your **favorites and active subscriptions**. If you have neither, the file is still a valid empty calendar — or choose **Or download one application** for an app-specific snapshot without creating an alert. No public calendar endpoint is required.
+
+Confirmed maintenance appears as confirmed (`STATUS:CONFIRMED`); approved windows that are not yet confirmed appear as tentative (`STATUS:TENTATIVE`, title prefixed with `[Approved window]`).
 
 > Downloaded calendars are static snapshots. New maintenance and later changes will not automatically appear. Download again to get an updated copy.
 

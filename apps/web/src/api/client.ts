@@ -427,11 +427,12 @@ export const api = {
     request<void>(`/api/v1/subscriptions/${id}`, { method: "DELETE" }),
   calendarReachability: () =>
     request<CalendarReachability>("/api/v1/calendar/reachability"),
-  downloadCalendarIcs: async () => {
+  downloadCalendarIcs: async (applicationId?: string) => {
     const headers = new Headers();
     const token = getToken();
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    const res = await fetch("/api/v1/calendar/download.ics", { headers });
+    const q = applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : "";
+    const res = await fetch(`/api/v1/calendar/download.ics${q}`, { headers });
     if (!res.ok) {
       let detail = res.statusText;
       try {
@@ -442,7 +443,9 @@ export const api = {
       }
       throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
     }
-    return res.blob();
+    const blob = await res.blob();
+    const countHeader = res.headers.get("X-MH-Calendar-Event-Count");
+    return { blob, eventCount: countHeader != null ? Number(countHeader) : null };
   },
   createCalendarToken: (body: unknown) =>
     request<{

@@ -113,6 +113,42 @@ describe("SubscriptionsPage", () => {
     expect(
       screen.getByText(/Downloaded calendars are static snapshots/i),
     ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Or download one application/i)).toBeInTheDocument();
+  });
+
+  it("shows compact empty state when there are no subscriptions", async () => {
+    api.subscriptions.mockResolvedValue([]);
+    api.applications.mockResolvedValue([
+      { id: "app1", key: "claims", name: "Claims Portal", status: "active", environments: [] },
+    ]);
+    api.environments.mockResolvedValue([]);
+    api.calendarReachability.mockResolvedValue({
+      configured: false,
+      https: false,
+      microsoft_cloud_reachable: false,
+      subscription_supported: false,
+      code: "missing",
+      message: "No public HTTPS base URL",
+    });
+    api.listCalendarTokens.mockResolvedValue([]);
+    api.me.mockResolvedValue({
+      id: "u1",
+      email: "viewer@demo.example.com",
+      display_name: "Viewer",
+      roles: ["viewer"],
+    });
+
+    render(
+      <MemoryRouter>
+        <SubscriptionsPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText(/No active alerts yet/i)).toBeInTheDocument();
+    });
+    expect(screen.queryByRole("heading", { name: /Active alerts/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Subscribe$/i })).toBeInTheDocument();
   });
 
   it("allows selecting advance reminders and notify types", async () => {

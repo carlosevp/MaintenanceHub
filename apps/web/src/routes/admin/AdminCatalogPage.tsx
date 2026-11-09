@@ -66,8 +66,8 @@ export function AdminCatalogPage() {
       (providerId ? "Provider" : "…");
     const cEnv = fromEnv ? envById.get(fromEnv)?.key : null;
     const pEnv = toEnv ? envById.get(toEnv)?.key : null;
-    const left = cEnv ? `${consumer} ${cEnv}` : consumer;
-    const right = pEnv ? `${provider} ${pEnv}` : provider;
+    const left = cEnv ? `${consumer} ${cEnv}` : `${consumer} (all environments)`;
+    const right = pEnv ? `${provider} ${pEnv}` : `${provider} (all environments)`;
     return `${left} → depends on → ${right}`;
   }, [consumerApp, providerId, fromEnv, toEnv, nameById, envById]);
 
@@ -171,6 +171,20 @@ export function AdminCatalogPage() {
     ev.preventDefault();
     setError(null);
     setMsg(null);
+    const code = envKey.trim().toUpperCase();
+    if (!editingEnvId) {
+      if (!code) {
+        setError("Environment code is required.");
+        return;
+      }
+      const duplicate = envs.find((e) => e.key.toUpperCase() === code);
+      if (duplicate) {
+        setError(
+          `Environment code "${code}" already exists (${duplicate.name}). Choose a unique code.`,
+        );
+        return;
+      }
+    }
     try {
       if (editingEnvId) {
         await api.updateEnvironment(editingEnvId, {
@@ -178,10 +192,10 @@ export function AdminCatalogPage() {
           description: envDescription || null,
           sort_order: envSort,
         });
-        setMsg("Environment updated.");
+        setMsg("Environment updated. Existing application associations are unchanged.");
       } else {
         await api.createEnvironment({
-          key: envKey,
+          key: code,
           name: envName,
           description: envDescription || null,
           sort_order: envSort,
@@ -242,38 +256,62 @@ export function AdminCatalogPage() {
           are not application deployment instances — assign definitions to apps when creating or
           editing applications.
         </p>
-        <form className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-5" onSubmit={onSaveEnv}>
+        <form
+          key={editingEnvId ? `edit-${editingEnvId}` : "create-env"}
+          className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-5"
+          onSubmit={onSaveEnv}
+          autoComplete="off"
+        >
           <div>
-            <label className="mh-label">Code</label>
+            <label className="mh-label" htmlFor="env-code">
+              Code
+            </label>
             <input
+              id="env-code"
+              name="env_code_new"
               className="mh-input"
               value={envKey}
               onChange={(e) => setEnvKey(e.target.value.toUpperCase())}
-              placeholder="QA"
+              placeholder="e.g. PERF"
               required={!editingEnvId}
               disabled={Boolean(editingEnvId)}
+              autoComplete="off"
             />
           </div>
           <div>
-            <label className="mh-label">Display name</label>
+            <label className="mh-label" htmlFor="env-name">
+              Display name
+            </label>
             <input
+              id="env-name"
+              name="env_display_name_new"
               className="mh-input"
               value={envName}
               onChange={(e) => setEnvName(e.target.value)}
+              placeholder="e.g. Performance"
               required
+              autoComplete="off"
             />
           </div>
           <div>
-            <label className="mh-label">Description</label>
+            <label className="mh-label" htmlFor="env-desc">
+              Description
+            </label>
             <input
+              id="env-desc"
               className="mh-input"
               value={envDescription}
               onChange={(e) => setEnvDescription(e.target.value)}
+              placeholder="Optional"
+              autoComplete="off"
             />
           </div>
           <div>
-            <label className="mh-label">Sort order</label>
+            <label className="mh-label" htmlFor="env-sort">
+              Sort order
+            </label>
             <input
+              id="env-sort"
               className="mh-input"
               type="number"
               value={envSort}
@@ -282,15 +320,20 @@ export function AdminCatalogPage() {
           </div>
           <div className="flex items-end gap-2">
             <button className="mh-btn" type="submit">
-              {editingEnvId ? "Save" : "Add"}
+              {editingEnvId ? "Save changes" : "Add environment"}
             </button>
             {editingEnvId && (
               <button className="mh-btn-ghost" type="button" onClick={resetEnvForm}>
-                Cancel
+                Cancel edit
               </button>
             )}
           </div>
         </form>
+        <p className="mt-2 text-xs text-ink-500">
+          {editingEnvId
+            ? `Editing ${envKey}. Code is immutable; application deployments that use this definition stay linked.`
+            : "New environment form starts empty. Codes must be unique. Existing app↔environment associations are never changed by creating a definition."}
+        </p>
         <ul className="mt-4 divide-y divide-ink-100">
           {envs.map((env) => (
             <li key={env.id} className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
@@ -357,15 +400,19 @@ export function AdminCatalogPage() {
             </select>
           </div>
           <div>
-            <label className="mh-label">Consumer environment (optional)</label>
+            <label className="mh-label">Consumer environment</label>
             <select className="mh-input" value={fromEnv} onChange={(e) => setFromEnv(e.target.value)}>
-              <option value="">Any / unspecified</option>
+              <option value="">All environments (agnostic)</option>
               {activeEnvs.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name} ({e.key})
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-xs text-ink-500">
+              Blank means the relationship applies in every consumer environment — not that the
+              environment is unknown.
+            </p>
           </div>
           <div>
             <label className="mh-label">Provider type</label>
@@ -386,15 +433,19 @@ export function AdminCatalogPage() {
             </select>
           </div>
           <div>
-            <label className="mh-label">Provider environment (optional)</label>
+            <label className="mh-label">Provider environment</label>
             <select className="mh-input" value={toEnv} onChange={(e) => setToEnv(e.target.value)}>
-              <option value="">Any / unspecified</option>
+              <option value="">All environments (agnostic)</option>
               {activeEnvs.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name} ({e.key})
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-xs text-ink-500">
+              Blank matches provider maintenance in any environment. Pin a code when only one
+              provider environment should trigger impact.
+            </p>
           </div>
           <div className="flex flex-col justify-end gap-2">
             <p className="rounded-md border border-ink-100 bg-ink-50 px-3 py-2 text-xs text-ink-700">

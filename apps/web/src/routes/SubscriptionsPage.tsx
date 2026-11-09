@@ -49,6 +49,7 @@ export function SubscriptionsPage() {
   const [tokens, setTokens] = useState<
     Array<{ id: string; label?: string | null; revoked_at?: string | null }>
   >([]);
+  const [downloadAppId, setDownloadAppId] = useState("");
 
   const filteredApps = useMemo(() => {
     const q = appSearch.trim().toLowerCase();
@@ -239,18 +240,31 @@ export function SubscriptionsPage() {
     }
   }
 
-  async function downloadIcs() {
+  async function downloadIcs(applicationId?: string) {
     setError(null);
     setMsg(null);
     try {
-      const blob = await api.downloadCalendarIcs();
+      const { blob, eventCount } = await api.downloadCalendarIcs(applicationId || undefined);
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "maintenancehub-calendar.ics";
+      const app = applicationId ? apps.find((x) => x.id === applicationId) : null;
+      a.download = app
+        ? `maintenancehub-${app.key}.ics`
+        : "maintenancehub-calendar.ics";
       a.click();
       URL.revokeObjectURL(url);
-      setMsg("Calendar downloaded.");
+      if (eventCount === 0) {
+        setMsg(
+          applicationId
+            ? "Downloaded an empty calendar for that application — no matching maintenance events."
+            : "Downloaded an empty calendar. Default scope is your favorites and subscriptions; add an alert or favorite, or choose an application below.",
+        );
+      } else {
+        setMsg(
+          `Calendar downloaded${eventCount != null ? ` (${eventCount} event${eventCount === 1 ? "" : "s"})` : ""}.`,
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Download failed");
     }
@@ -288,22 +302,35 @@ export function SubscriptionsPage() {
         </p>
       )}
 
-      <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-        <section className="mh-panel p-5" aria-labelledby="subs-list">
-          <div className="flex flex-wrap items-end justify-between gap-2">
-            <div>
-              <h2 id="subs-list" className="font-display text-xl font-semibold">
-                Active alerts
-              </h2>
-              <p className="text-sm text-ink-muted">{subs.length} subscription{subs.length === 1 ? "" : "s"}</p>
+      {subs.length === 0 && !editingId && (
+        <div className="rounded-xl border border-dashed border-ink-200 bg-ink-50/60 px-4 py-3 text-sm text-ink-700">
+          <p className="font-medium text-ink">No active alerts yet</p>
+          <p className="mt-1 text-ink-600">
+            Use the form below to search an application, choose environments, pick reminders, and
+            subscribe. Your alerts will appear here for review, edit, or unsubscribe.
+          </p>
+        </div>
+      )}
+
+      <div
+        className={
+          subs.length === 0
+            ? "grid gap-4"
+            : "grid gap-4 xl:grid-cols-[1.1fr_0.9fr]"
+        }
+      >
+        {subs.length > 0 && (
+          <section className="mh-panel p-5" aria-labelledby="subs-list">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <h2 id="subs-list" className="font-display text-xl font-semibold">
+                  Active alerts
+                </h2>
+                <p className="text-sm text-ink-muted">
+                  {subs.length} subscription{subs.length === 1 ? "" : "s"}
+                </p>
+              </div>
             </div>
-          </div>
-          {subs.length === 0 ? (
-            <p className="mt-4 text-sm text-ink-500">
-              No alerts yet. Create one on the right — search an app, choose environments, and
-              subscribe.
-            </p>
-          ) : (
             <ul className="mt-4 space-y-3">
               {subs.map((s) => (
                 <li
@@ -359,10 +386,13 @@ export function SubscriptionsPage() {
                 </li>
               ))}
             </ul>
-          )}
-        </section>
+          </section>
+        )}
 
-        <section className="mh-panel p-5" aria-labelledby="subs-create">
+        <section
+          className={`mh-panel p-5 ${subs.length === 0 ? "max-w-2xl" : ""}`}
+          aria-labelledby="subs-create"
+        >
           <h2 id="subs-create" className="font-display text-xl font-semibold">
             {editingId ? "Edit alert" : "Subscribe"}
           </h2>
@@ -611,13 +641,48 @@ export function SubscriptionsPage() {
           <div className="rounded-xl border border-ink-100 p-4">
             <h3 className="font-display text-lg font-semibold">Option B — Download calendar (.ics)</h3>
             <p className="mt-1 text-sm text-ink-600">
-              Snapshot for your selected app/environment subscriptions. Uses the same ICS
-              generation as the feed — recurrence, overrides, cancellations, and timezones as
-              supported — without a public calendar endpoint.
+              Default download covers your <strong>favorites and active subscriptions</strong>.
+              Confirmed maintenance is marked confirmed; approved (unconfirmed) windows are
+              tentative. Recurrence, overrides, cancellations, and timezones follow the same ICS
+              generation as the feed — no public calendar endpoint.
             </p>
+            {subs.length === 0 && (
+              <p className="mt-2 rounded-md border border-ink-100 bg-ink-50 px-3 py-2 text-xs text-ink-700">
+                You have no subscriptions yet. The default download may be empty unless you have
+                favorites. Optionally download one application below without creating an alert.
+              </p>
+            )}
             <button type="button" className="mh-btn mt-3" onClick={() => void downloadIcs()}>
               Download calendar (.ics)
             </button>
+            <div className="mt-3 space-y-2">
+              <label className="mh-label" htmlFor="download-app">
+                Or download one application
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <select
+                  id="download-app"
+                  className="mh-input max-w-xs"
+                  value={downloadAppId}
+                  onChange={(e) => setDownloadAppId(e.target.value)}
+                >
+                  <option value="">Select application…</option>
+                  {apps.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="mh-btn-ghost"
+                  disabled={!downloadAppId}
+                  onClick={() => void downloadIcs(downloadAppId)}
+                >
+                  Download app .ics
+                </button>
+              </div>
+            </div>
             <p className="mt-3 text-xs text-ink-500">
               Downloaded calendars are static snapshots. New maintenance and later changes will not
               automatically appear. Download again to get an updated copy.
