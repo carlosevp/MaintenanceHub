@@ -25,7 +25,50 @@ export type Environment = {
   id: string;
   key: string;
   name: string;
+  description?: string | null;
   sort_order: number;
+  is_active?: boolean;
+};
+
+export type SubscriptionTarget = {
+  id: string;
+  target_type: string;
+  target_id: string;
+  application_id?: string | null;
+  application_name?: string | null;
+  application_key?: string | null;
+  environment_id?: string | null;
+  environment_name?: string | null;
+  environment_key?: string | null;
+  event_title?: string | null;
+  label: string;
+  scope_label: string;
+  missing: boolean;
+};
+
+export type Subscription = {
+  id: string;
+  user_id: string;
+  is_active: boolean;
+  digest_mode: string;
+  destination_type: string;
+  destination: string;
+  bridge_channel_key?: string | null;
+  notify_events: string[];
+  notify_event_labels: string[];
+  channel_label: string;
+  targets: SubscriptionTarget[];
+  reminders: Array<{ id: string; offset_minutes: number; label?: string | null }>;
+};
+
+export type CalendarReachability = {
+  base_url?: string | null;
+  configured: boolean;
+  https: boolean;
+  microsoft_cloud_reachable: boolean;
+  subscription_supported: boolean;
+  code: string;
+  message: string;
 };
 
 export type RecurrenceInfo = {
@@ -238,7 +281,24 @@ export const api = {
   application: (id: string) => request<Application>(`/api/v1/applications/${id}`),
   createApplication: (body: unknown) =>
     request<Application>("/api/v1/applications", { method: "POST", body: JSON.stringify(body) }),
-  environments: () => request<Environment[]>("/api/v1/environments"),
+  environments: (includeInactive = false) =>
+    request<Environment[]>(
+      `/api/v1/environments${includeInactive ? "?include_inactive=true" : ""}`,
+    ),
+  createEnvironment: (body: unknown) =>
+    request<Environment>("/api/v1/environments", { method: "POST", body: JSON.stringify(body) }),
+  updateEnvironment: (id: string, body: unknown) =>
+    request<Environment>(`/api/v1/environments/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deactivateEnvironment: (id: string) =>
+    request<Environment>(`/api/v1/environments/${id}/deactivate`, { method: "POST" }),
+  putAppEnvironments: (appId: string, body: unknown) =>
+    request<unknown>(`/api/v1/applications/${appId}/environments`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   events: (params: URLSearchParams) =>
     request<MaintenanceEvent[]>(`/api/v1/events?${params}`),
   event: (id: string) => request<MaintenanceEvent>(`/api/v1/events/${id}`),
@@ -355,16 +415,60 @@ export const api = {
     request<Record<string, unknown>>(`/api/v1/status/events/${encodeURIComponent(eventId)}`),
   statusScheduled: (eventId: string) =>
     request<Record<string, unknown>>(`/api/v1/status/scheduled/${encodeURIComponent(eventId)}`),
-  subscriptions: () => request<unknown[]>("/api/v1/subscriptions"),
+  subscriptions: () => request<Subscription[]>("/api/v1/subscriptions"),
   createSubscription: (body: unknown) =>
-    request<unknown>("/api/v1/subscriptions", { method: "POST", body: JSON.stringify(body) }),
+    request<Subscription>("/api/v1/subscriptions", { method: "POST", body: JSON.stringify(body) }),
+  updateSubscription: (id: string, body: unknown) =>
+    request<Subscription>(`/api/v1/subscriptions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   deleteSubscription: (id: string) =>
     request<void>(`/api/v1/subscriptions/${id}`, { method: "DELETE" }),
+  calendarReachability: () =>
+    request<CalendarReachability>("/api/v1/calendar/reachability"),
+  downloadCalendarIcs: async (applicationId?: string) => {
+    const headers = new Headers();
+    const token = getToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    const q = applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : "";
+    const res = await fetch(`/api/v1/calendar/download.ics${q}`, { headers });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const body = await res.json();
+        detail = body.detail || detail;
+      } catch {
+        /* ignore */
+      }
+      throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
+    }
+    const blob = await res.blob();
+    const countHeader = res.headers.get("X-MH-Calendar-Event-Count");
+    return { blob, eventCount: countHeader != null ? Number(countHeader) : null };
+  },
   createCalendarToken: (body: unknown) =>
-    request<{ token: string; feed_url: string }>("/api/v1/calendar-tokens", {
+    request<{
+      token: string;
+      feed_url: string;
+      id: string;
+      reachability?: CalendarReachability;
+    }>("/api/v1/calendar-tokens", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  listCalendarTokens: () =>
+    request<
+      Array<{
+        id: string;
+        scopes: string[];
+        label?: string | null;
+        revoked_at?: string | null;
+        created_at?: string | null;
+      }>
+    >("/api/v1/calendar-tokens"),
+  revokeCalendarToken: (id: string) =>
+    request<void>(`/api/v1/calendar-tokens/${id}`, { method: "DELETE" }),
 
 
   // ----- M15 Administration -----

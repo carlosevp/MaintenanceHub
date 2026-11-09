@@ -2,7 +2,8 @@
 
 - [IMPLEMENTATION_AUDIT.md](./IMPLEMENTATION_AUDIT.md) — requirement map, categories, defects, demo checklist
 - [LIMITATIONS.md](./LIMITATIONS.md) — incomplete / deferred capabilities (also shown on in-app About)
-- [administration.md](./administration.md) — M15 Administration workspace; UI vs deployment-time config
+- [administration.md](./administration.md) — M15 Administration workspace; UI vs deployment-time config; environment catalog + dependency management
+- [user-guide-alerts-calendar.md](./user-guide-alerts-calendar.md) — My Alerts subscribe/edit UX; Outlook subscribe vs Download `.ics`
 - M16 consumer/publisher UX — My Applications, calendar agenda, four-step publish wizard, status URLs (see LIMITATIONS + IMPLEMENTATION_AUDIT)
 - [recurrence.md](./recurrence.md) — M3b RRULE storage, occurrence identity/lifecycle, series scopes, phases, exception reconciliation
 - [impact-analysis.md](./impact-analysis.md) — M14 dependency analysis, preview/confirm, revision tokens, authz

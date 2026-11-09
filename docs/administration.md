@@ -9,7 +9,7 @@ Authorization is enforced by the API (`platform_administrator`). Hiding nav is n
 | Section | Capabilities |
 |---------|----------------|
 | Overview | Catalog/job/delivery counts; redacted secrets/config status; OpenShift-only callouts |
-| Apps & Dependencies | Consumer→Provider editor (cross-env), infra create, dependency list/delete |
+| Apps, envs & deps | Environment catalog (create/edit/deactivate); Consumer→Provider dependency editor (cross-env); infra create; dependency list/delete |
 | ServiceNow & CMDB | Status without secrets; connection test; dry-run / poll-now; unmatched resolve; CSV upload→preview→commit→history |
 | Notifications | SMTP/bridge status; **Template Manager** (CRUD/clone/activate/versions); PA `To:` routing docs; preview + test send (capture vs real). See [power-automate-templates.md](./power-automate-templates.md). |
 | Users & Permissions | Users; application grants; directory group→role maps; service credentials create/rotate/revoke |
@@ -20,7 +20,8 @@ Authorization is enforced by the API (`platform_administrator`). Hiding nav is n
 
 **Runtime-editable in the Administration UI (via API):**
 
-- Manual dependency edges (incl. cross-environment); consumer app grant required for non-admins
+- Environment catalog definitions (code, display name, description, sort order, active/inactive). Prefer deactivate over delete when referenced. Distinct from per-application deployment instances (`AppEnvironment`).
+- Manual dependency edges (incl. cross-environment); consumer app grant required for non-admins. Direction is always Consumer depends on Provider — if the provider is affected, the consumer may also be impacted. Leaving environment blank means **environment-agnostic** (matches all environments on that side), not “unknown.”
 - Infra component create
 - Support groups / catalog objects already exposed by catalog APIs
 - CSV import preview/commit (`import_mode` recorded; absences never deleted)

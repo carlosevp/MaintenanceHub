@@ -21,6 +21,7 @@ from maintenancehub_api.models import (
     CsvImportJob,
     DeliveryStatus,
     Dependency,
+    Environment,
     InfraComponent,
     Job,
     JobStatus,
@@ -343,6 +344,74 @@ def delete_grant(
     db.commit()
 
 
+def _subject_label(db: Session, subject_type: str, subject_id: str) -> str:
+    if subject_type == "application":
+        app = db.get(Application, subject_id)
+        return app.name if app else "Unknown application"
+    if subject_type == "infra_component":
+        infra = db.get(InfraComponent, subject_id)
+        return infra.name if infra else "Unknown infrastructure"
+    if subject_type == "service":
+        svc = db.get(Service, subject_id)
+        return svc.name if svc else "Unknown service"
+    return subject_type
+
+
+def _env_label(db: Session, env_id: str | None) -> tuple[str | None, str | None]:
+    if not env_id:
+        return None, None
+    env = db.get(Environment, env_id)
+    if not env:
+        return "Unknown environment", None
+    return env.name, env.key
+
+
+def _dependency_summary(
+    db: Session,
+    *,
+    from_type: str,
+    from_id: str,
+    to_type: str,
+    to_id: str,
+    from_environment_id: str | None,
+    to_environment_id: str | None,
+) -> dict[str, Any]:
+    consumer = _subject_label(db, from_type, from_id)
+    provider = _subject_label(db, to_type, to_id)
+    from_env_name, from_env_key = _env_label(db, from_environment_id)
+    to_env_name, to_env_key = _env_label(db, to_environment_id)
+    # Null environment_id means deliberately environment-agnostic (matches any env),
+    # not an unknown/missing environment.
+    consumer_side = f"{consumer} {from_env_key}" if from_env_key else f"{consumer} (all environments)"
+    provider_side = f"{provider} {to_env_key}" if to_env_key else f"{provider} (all environments)"
+    summary = f"{consumer_side} → depends on → {provider_side}"
+    return {
+        "consumer_label": consumer,
+        "provider_label": provider,
+        "from_environment_name": from_env_name,
+        "from_environment_key": from_env_key,
+        "to_environment_name": to_env_name,
+        "to_environment_key": to_env_key,
+        "from_environment_agnostic": from_environment_id is None,
+        "to_environment_agnostic": to_environment_id is None,
+        "summary": summary,
+        "description": (
+            "If the provider is affected by maintenance, the consumer may also be impacted. "
+            + summary
+            + (
+                " Blank environment sides are agnostic (apply to all environments), not unknown."
+                if from_environment_id is None or to_environment_id is None
+                else ""
+            )
+        ),
+        "cross_environment": bool(
+            from_environment_id
+            and to_environment_id
+            and from_environment_id != to_environment_id
+        ),
+    }
+
+
 @router.get("/dependencies")
 def list_all_dependencies(
     db: Session = Depends(get_db),
@@ -353,7 +422,19 @@ def list_all_dependencies(
     rows = db.query(Dependency).order_by(Dependency.updated_at.desc()).limit(limit).all()
     out: list[dict[str, Any]] = []
     for d in rows:
-        blob = f"{d.from_type}:{d.from_id}:{d.to_type}:{d.to_id}:{d.origin}:{d.dependency_kind}"
+        meta = _dependency_summary(
+            db,
+            from_type=d.from_type,
+            from_id=d.from_id,
+            to_type=d.to_type,
+            to_id=d.to_id,
+            from_environment_id=d.from_environment_id,
+            to_environment_id=d.to_environment_id,
+        )
+        blob = (
+            f"{meta['summary']}:{d.from_type}:{d.from_id}:{d.to_type}:{d.to_id}:"
+            f"{d.origin}:{d.dependency_kind}"
+        )
         if q and q.lower() not in blob.lower():
             continue
         out.append(
@@ -368,9 +449,7 @@ def list_all_dependencies(
                 "dependency_kind": d.dependency_kind,
                 "origin": d.origin,
                 "updated_at": d.updated_at.isoformat() if d.updated_at else None,
-                "description": (
-                    f"Consumer ({d.from_type}) depends on Provider ({d.to_type})"
-                ),
+                **meta,
             }
         )
     return out
@@ -451,6 +530,15 @@ def create_admin_dependency(
             "cycle_warning": bool(reverse),
         },
     )
+    meta = _dependency_summary(
+        db,
+        from_type=row.from_type,
+        from_id=row.from_id,
+        to_type=row.to_type,
+        to_id=row.to_id,
+        from_environment_id=row.from_environment_id,
+        to_environment_id=row.to_environment_id,
+    )
     return {
         "id": row.id,
         "from_type": row.from_type,
@@ -462,7 +550,7 @@ def create_admin_dependency(
         "dependency_kind": row.dependency_kind,
         "origin": row.origin,
         "cycle_warning": bool(reverse),
-        "description": "Consumer depends on Provider",
+        **meta,
     }
 
 

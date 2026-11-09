@@ -6,7 +6,7 @@ import { useExperience } from "@/features/experience/ExperienceContext";
 
 const sections = [
   { to: "/admin", label: "Overview", end: true, capability: "admin_workspace" },
-  { to: "/admin/catalog", label: "Apps & dependencies", capability: "admin_workspace" },
+  { to: "/admin/catalog", label: "Apps, envs & deps", capability: "admin_workspace" },
   { to: "/admin/servicenow", label: "Integrations & import", capability: "servicenow" },
   { to: "/admin/notifications", label: "Notifications", capability: "notification_admin" },
   { to: "/admin/users", label: "Users & permissions", capability: "admin_users" },

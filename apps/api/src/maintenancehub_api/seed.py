@@ -75,22 +75,35 @@ def seed_demo(db: Session) -> None:
                 db.add(UserRole(user_id=user.id, role_id=roles[rn].id))
         users[email] = user
 
-    # Environments
+    # Environments (catalog definitions — distinct from per-app AppEnvironment instances)
     env_defs = [
-        ("DEV", "Development", 10),
-        ("INT", "Integration", 20),
-        ("QA", "QA", 30),
-        ("UAT", "UAT", 40),
-        ("PROD", "Production", 50),
-        ("NON-PROD", "Non-Production shared", 15),
+        ("DEV", "Development", "Day-to-day development", 10),
+        ("INT", "Integration", "Integrated non-production", 20),
+        ("QA", "QA", "Quality assurance", 30),
+        ("UAT", "UAT", "User acceptance", 40),
+        ("PROD", "Production", "Production", 50),
+        ("PERF", "Performance", "Performance / load testing", 60),
+        ("DR", "Disaster Recovery", "Disaster recovery", 70),
+        ("NON-PROD", "Non-Production shared", "Shared non-production infrastructure", 15),
     ]
     envs: dict[str, Environment] = {}
-    for key, name, sort in env_defs:
+    for key, name, description, sort in env_defs:
         env = db.query(Environment).filter(Environment.key == key).first()
         if not env:
-            env = Environment(key=key, name=name, sort_order=sort)
+            env = Environment(
+                key=key,
+                name=name,
+                description=description,
+                sort_order=sort,
+                is_active=True,
+            )
             db.add(env)
             db.flush()
+        else:
+            if not env.description:
+                env.description = description
+            if env.is_active is None:
+                env.is_active = True
         envs[key] = env
 
     # Support group

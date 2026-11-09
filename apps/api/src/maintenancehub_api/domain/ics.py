@@ -77,20 +77,34 @@ def revoke_token(db: Session, token_id: str, user_id: str) -> bool:
     return True
 
 
-def events_for_token(db: Session, token: CalendarToken) -> list[MaintenanceEvent]:
-    scopes = set(token.scopes or [])
+def events_for_user(
+    db: Session,
+    user_id: str,
+    *,
+    scopes: list[str] | None = None,
+    include_cancelled: bool = True,
+) -> list[MaintenanceEvent]:
+    """Events visible for calendar export / ICS for a user.
+
+    Includes favorites and subscription targets. ``app_environment`` targets match
+    exact (application, environment) pairs on the same impact row. Cancelled events
+    are included by default so static downloads retain STATUS:CANCELLED.
+    """
+    scope_set = set(scopes or ["favorites", "subscriptions"])
     app_ids: set[str] = set()
     event_ids: set[str] = set()
+    app_env_pairs: set[tuple[str, str]] = set()
+    env_ids: set[str] = set()
 
-    if "favorites" in scopes or "all" in scopes:
-        favs = db.query(Favorite).filter(Favorite.user_id == token.user_id).all()
+    if "favorites" in scope_set or "all" in scope_set:
+        favs = db.query(Favorite).filter(Favorite.user_id == user_id).all()
         app_ids.update(f.application_id for f in favs)
 
-    if "subscriptions" in scopes or "all" in scopes:
+    if "subscriptions" in scope_set or "all" in scope_set:
         subs = (
             db.query(Subscription)
             .options(joinedload(Subscription.targets))
-            .filter(Subscription.user_id == token.user_id, Subscription.is_active.is_(True))
+            .filter(Subscription.user_id == user_id, Subscription.is_active.is_(True))
             .all()
         )
         for sub in subs:
@@ -99,8 +113,13 @@ def events_for_token(db: Session, token: CalendarToken) -> list[MaintenanceEvent
                     app_ids.add(t.target_id)
                 elif t.target_type == "event":
                     event_ids.add(t.target_id)
+                elif t.target_type == "environment":
+                    env_ids.add(t.target_id)
+                elif t.target_type == "app_environment" and ":" in t.target_id:
+                    a, e = t.target_id.split(":", 1)
+                    app_env_pairs.add((a, e))
 
-    if not app_ids and not event_ids:
+    if not app_ids and not event_ids and not app_env_pairs and not env_ids:
         return []
 
     matched_ids: set[str] = set(event_ids)
@@ -115,19 +134,81 @@ def events_for_token(db: Session, token: CalendarToken) -> list[MaintenanceEvent
         )
         matched_ids.update(r[0] for r in impact_event_ids)
 
-    return (
+    if env_ids:
+        env_event_ids = (
+            db.query(EventImpact.event_id)
+            .filter(EventImpact.environment_id.in_(env_ids))
+            .all()
+        )
+        matched_ids.update(r[0] for r in env_event_ids)
+
+    if app_env_pairs:
+        # Load candidate impacts for the apps in pairs, then filter exact pairs.
+        pair_apps = {a for a, _ in app_env_pairs}
+        rows = (
+            db.query(EventImpact.event_id, EventImpact.target_id, EventImpact.environment_id)
+            .filter(
+                EventImpact.target_type == ImpactTargetType.application,
+                EventImpact.target_id.in_(pair_apps),
+            )
+            .all()
+        )
+        for event_id, target_id, environment_id in rows:
+            if environment_id and (target_id, environment_id) in app_env_pairs:
+                matched_ids.add(event_id)
+
+    if not matched_ids:
+        return []
+
+    q = (
         db.query(MaintenanceEvent)
         .options(
             joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions)
         )
+        .filter(MaintenanceEvent.id.in_(matched_ids))
+    )
+    if not include_cancelled:
+        q = q.filter(MaintenanceEvent.status != EventStatus.cancelled)
+    return q.order_by(MaintenanceEvent.starts_at.asc()).limit(500).all()
+
+
+def events_for_token(db: Session, token: CalendarToken) -> list[MaintenanceEvent]:
+    return events_for_user(
+        db,
+        token.user_id,
+        scopes=list(token.scopes or []),
+        include_cancelled=False,
+    )
+
+
+def events_for_application(
+    db: Session,
+    application_id: str,
+    *,
+    include_cancelled: bool = True,
+) -> list[MaintenanceEvent]:
+    """Events impacting a single application (any environment)."""
+    impact_event_ids = (
+        db.query(EventImpact.event_id)
         .filter(
-            MaintenanceEvent.id.in_(matched_ids),
-            MaintenanceEvent.status != EventStatus.cancelled,
+            EventImpact.target_type == ImpactTargetType.application,
+            EventImpact.target_id == application_id,
         )
-        .order_by(MaintenanceEvent.starts_at.asc())
-        .limit(500)
         .all()
     )
+    matched_ids = {r[0] for r in impact_event_ids}
+    if not matched_ids:
+        return []
+    q = (
+        db.query(MaintenanceEvent)
+        .options(
+            joinedload(MaintenanceEvent.recurrence_rule).joinedload(RecurrenceRule.exceptions)
+        )
+        .filter(MaintenanceEvent.id.in_(matched_ids))
+    )
+    if not include_cancelled:
+        q = q.filter(MaintenanceEvent.status != EventStatus.cancelled)
+    return q.order_by(MaintenanceEvent.starts_at.asc()).limit(500).all()
 
 
 def _fmt_dt(dt: datetime) -> str:
@@ -174,19 +255,34 @@ def build_ics(
     now = _fmt_dt(datetime.now(timezone.utc))
     for event in events:
         uid = series_uid(event.id)
+        is_approved_window = event.approval_state.value == "approved_window"
+        is_cancelled = event.status == EventStatus.cancelled
+        # Confirmed maintenance → CONFIRMED; approved (unconfirmed) windows → TENTATIVE.
+        if is_cancelled:
+            status = "CANCELLED"
+        elif is_approved_window:
+            status = "TENTATIVE"
+        else:
+            status = "CONFIRMED"
+        title = event.title
+        if is_approved_window and not is_cancelled:
+            title = f"[Approved window] {event.title}"
+        elif status == "CONFIRMED":
+            # Keep titles readable; approval called out in DESCRIPTION.
+            pass
         desc_parts = [
             event.description or "",
             f"Status: {event.status.value}",
-            f"Approval: {event.approval_state.value}",
+            (
+                "Approval: approved_window (tentative — not yet confirmed maintenance)"
+                if is_approved_window
+                else "Approval: confirmed_scheduled (confirmed maintenance)"
+            ),
             f"Kind: {event.kind.value}",
         ]
         if event.expected_impact:
             desc_parts.append(f"Impact: {event.expected_impact}")
         description = _escape("\n".join(p for p in desc_parts if p))
-        status = "CANCELLED" if event.status == EventStatus.cancelled else "CONFIRMED"
-        # Approved windows are still published as tentative in ICS when not confirmed
-        if event.approval_state.value == "approved_window" and status == "CONFIRMED":
-            status = "TENTATIVE"
 
         lines.extend(
             [
@@ -195,7 +291,7 @@ def build_ics(
                 f"DTSTAMP:{now}",
                 f"DTSTART:{_fmt_dt(event.starts_at)}",
                 f"DTEND:{_fmt_dt(event.ends_at)}",
-                f"SUMMARY:{_escape(event.title)}",
+                f"SUMMARY:{_escape(title)}",
                 f"DESCRIPTION:{description}",
                 f"STATUS:{status}",
             ]
@@ -222,7 +318,7 @@ def build_ics(
                         f"RECURRENCE-ID:{_fmt_dt(ensure_utc(ex.original_starts_at))}",
                         f"DTSTART:{_fmt_dt(ensure_utc(ex.new_starts_at))}",
                         f"DTEND:{_fmt_dt(ensure_utc(ex.new_ends_at))}",
-                        f"SUMMARY:{_escape(event.title)}",
+                        f"SUMMARY:{_escape(title)}",
                         f"DESCRIPTION:{description}",
                         f"STATUS:{status}",
                         "END:VEVENT",

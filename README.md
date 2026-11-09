@@ -4,7 +4,7 @@ Internal **Maintenance & Outage Communication Platform**.
 
 This is **not** a monitoring product. Status is published by people (planned maintenance, extensions, manual outages). Platform `/healthz` and `/readyz` exist only for pod liveness/readiness.
 
-Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M18** (catalog through UX profiles, and public/internal banner embeds). See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for remaining gaps.
+Architecture source of truth lives in the Project store docs (PRD, ADRs, data model, API contracts, milestone plan). This repository implements milestones **M0 → M19** plus My Alerts / Outlook calendar / environment-catalog improvements. See [docs/LIMITATIONS.md](docs/LIMITATIONS.md) for remaining gaps and [docs/user-guide-alerts-calendar.md](docs/user-guide-alerts-calendar.md) for consumer calendar options.
 
 ## Stack
 
