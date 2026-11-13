@@ -11,7 +11,9 @@ import {
 const REMINDER_OPTIONS = [
   { minutes: -1440, label: "24 hours before" },
   { minutes: -240, label: "4 hours before" },
+  { minutes: -60, label: "1 hour before" },
   { minutes: -30, label: "30 minutes before" },
+  { minutes: -5, label: "5 minutes before" },
 ] as const;
 
 const NOTIFY_OPTIONS = [
@@ -47,9 +49,15 @@ export function SubscriptionsPage() {
   const [icsUrl, setIcsUrl] = useState<string | null>(null);
   const [reachability, setReachability] = useState<CalendarReachability | null>(null);
   const [tokens, setTokens] = useState<
-    Array<{ id: string; label?: string | null; revoked_at?: string | null }>
+    Array<{
+      id: string;
+      label?: string | null;
+      include_alarms?: boolean;
+      revoked_at?: string | null;
+    }>
   >([]);
   const [downloadAppId, setDownloadAppId] = useState("");
+  const [includeIcsAlarms, setIncludeIcsAlarms] = useState(true);
 
   const filteredApps = useMemo(() => {
     const q = appSearch.trim().toLowerCase();
@@ -231,6 +239,7 @@ export function SubscriptionsPage() {
       const body = await api.createCalendarToken({
         scopes: ["favorites", "subscriptions"],
         label: "Outlook",
+        include_alarms: includeIcsAlarms,
       });
       setIcsUrl(body.feed_url);
       if (body.reachability) setReachability(body.reachability);
@@ -244,7 +253,9 @@ export function SubscriptionsPage() {
     setError(null);
     setMsg(null);
     try {
-      const { blob, eventCount } = await api.downloadCalendarIcs(applicationId || undefined);
+      const { blob, eventCount } = await api.downloadCalendarIcs(applicationId || undefined, {
+        includeAlarms: includeIcsAlarms,
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -589,7 +600,22 @@ export function SubscriptionsPage() {
         <p className="mt-1 max-w-3xl text-sm text-ink-muted">
           Two choices: subscribe to a refreshable feed when Outlook can reach your configured HTTPS
           URL, or download a static <code>.ics</code> snapshot that never exposes an internal URL.
+          Calendar reminders (VALARM) reuse the advance reminder offsets from your My Alerts
+          subscriptions for matching app/environment pairs.
         </p>
+
+        <label className="mt-4 flex items-start gap-2 text-sm text-ink">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={includeIcsAlarms}
+            onChange={(e) => setIncludeIcsAlarms(e.target.checked)}
+          />
+          <span>
+            Include calendar alerts (1 hour, 5 minutes, and your other chosen advance reminders)
+            in subscribe feeds and downloads
+          </span>
+        </label>
 
         <div className="mt-5 grid gap-4 lg:grid-cols-2">
           <div className="rounded-xl border border-ink-100 p-4">
@@ -624,7 +650,10 @@ export function SubscriptionsPage() {
               <ul className="mt-3 space-y-2 text-sm">
                 {tokens.map((t) => (
                   <li key={t.id} className="flex items-center justify-between gap-2">
-                    <span className="text-ink-600">{t.label || "Calendar feed"}</span>
+                    <span className="text-ink-600">
+                      {t.label || "Calendar feed"}
+                      {t.include_alarms ? " · calendar alerts on" : ""}
+                    </span>
                     <button
                       type="button"
                       className="mh-btn-ghost text-xs"

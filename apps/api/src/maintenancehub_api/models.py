@@ -831,6 +831,8 @@ class CalendarToken(Base):
     # scopes: favorites | subscriptions | all (JSON list)
     scopes: Mapped[Any] = mapped_column(JSON, nullable=False, default=list)
     label: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    # When true, ICS VEVENTs include VALARM from the owner's subscription reminder offsets.
+    include_alarms: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

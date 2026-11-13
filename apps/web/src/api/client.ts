@@ -427,11 +427,17 @@ export const api = {
     request<void>(`/api/v1/subscriptions/${id}`, { method: "DELETE" }),
   calendarReachability: () =>
     request<CalendarReachability>("/api/v1/calendar/reachability"),
-  downloadCalendarIcs: async (applicationId?: string) => {
+  downloadCalendarIcs: async (
+    applicationId?: string,
+    opts?: { includeAlarms?: boolean },
+  ) => {
     const headers = new Headers();
     const token = getToken();
     if (token) headers.set("Authorization", `Bearer ${token}`);
-    const q = applicationId ? `?application_id=${encodeURIComponent(applicationId)}` : "";
+    const params = new URLSearchParams();
+    if (applicationId) params.set("application_id", applicationId);
+    if (opts?.includeAlarms) params.set("include_alarms", "true");
+    const q = params.toString() ? `?${params.toString()}` : "";
     const res = await fetch(`/api/v1/calendar/download.ics${q}`, { headers });
     if (!res.ok) {
       let detail = res.statusText;
@@ -452,6 +458,7 @@ export const api = {
       token: string;
       feed_url: string;
       id: string;
+      include_alarms?: boolean;
       reachability?: CalendarReachability;
     }>("/api/v1/calendar-tokens", {
       method: "POST",
@@ -463,6 +470,7 @@ export const api = {
         id: string;
         scopes: string[];
         label?: string | null;
+        include_alarms?: boolean;
         revoked_at?: string | null;
         created_at?: string | null;
       }>
