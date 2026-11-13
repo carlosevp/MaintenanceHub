@@ -172,6 +172,8 @@ class TestSendRequest(BaseModel):
 class CalendarTokenCreate(BaseModel):
     scopes: list[str] = Field(default_factory=lambda: ["favorites", "subscriptions"])
     label: Optional[str] = None
+    # Emit VALARM from the owner's My Alerts reminder offsets on matching events.
+    include_alarms: bool = False
 
 
 class CalendarFeedReachability(BaseModel):
@@ -188,6 +190,7 @@ class CalendarTokenOut(ORMModel):
     id: str
     scopes: list
     label: Optional[str] = None
+    include_alarms: bool = False
     expires_at: Optional[str] = None
     revoked_at: Optional[str] = None
     created_at: Optional[str] = None

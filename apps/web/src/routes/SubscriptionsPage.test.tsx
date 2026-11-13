@@ -114,6 +114,58 @@ describe("SubscriptionsPage", () => {
       screen.getByText(/Downloaded calendars are static snapshots/i),
     ).toBeInTheDocument();
     expect(screen.getByLabelText(/Or download one application/i)).toBeInTheDocument();
+    expect(
+      screen.getByRole("checkbox", { name: /Include calendar alerts/i }),
+    ).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /1 hour before/i })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: /5 minutes before/i })).toBeInTheDocument();
+  });
+
+  it("passes include_alarms when creating a calendar feed", async () => {
+    const user = userEvent.setup();
+    api.subscriptions.mockResolvedValue([]);
+    api.applications.mockResolvedValue([
+      { id: "app1", key: "claims", name: "Claims Portal", status: "active", environments: [] },
+    ]);
+    api.environments.mockResolvedValue([]);
+    api.calendarReachability.mockResolvedValue({
+      configured: true,
+      https: true,
+      microsoft_cloud_reachable: true,
+      subscription_supported: true,
+      code: "ok",
+      message: "Reachable",
+      base_url: "https://example.com",
+    });
+    api.listCalendarTokens.mockResolvedValue([]);
+    api.me.mockResolvedValue({
+      id: "u1",
+      email: "viewer@demo.example.com",
+      display_name: "Viewer",
+      roles: ["viewer"],
+    });
+    api.createCalendarToken.mockResolvedValue({
+      id: "tok1",
+      token: "secret",
+      feed_url: "https://example.com/api/v1/public/ics/secret",
+      include_alarms: true,
+    });
+
+    render(
+      <MemoryRouter>
+        <SubscriptionsPage />
+      </MemoryRouter>,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /Create subscription feed/i })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: /Create subscription feed/i }));
+    await waitFor(() => expect(api.createCalendarToken).toHaveBeenCalled());
+    expect(api.createCalendarToken.mock.calls[0][0]).toMatchObject({
+      include_alarms: true,
+      scopes: ["favorites", "subscriptions"],
+    });
   });
 
   it("shows compact empty state when there are no subscriptions", async () => {

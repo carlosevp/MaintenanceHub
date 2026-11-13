@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from sqlalchemy.orm import Session, joinedload
 
@@ -32,6 +32,7 @@ def create_calendar_token(
     user_id: str,
     scopes: list[str] | None = None,
     label: str | None = None,
+    include_alarms: bool = False,
     expires_at: datetime | None = None,
 ) -> tuple[CalendarToken, str]:
     """Returns (row, raw_secret_once)."""
@@ -41,6 +42,7 @@ def create_calendar_token(
         token_hash=hash_token(raw),
         scopes=scopes or ["favorites", "subscriptions"],
         label=label,
+        include_alarms=include_alarms,
         expires_at=expires_at,
     )
     db.add(row)
@@ -233,16 +235,73 @@ def series_uid(event_id: str) -> str:
     return f"{event_id}@maintenancehub"
 
 
+def trigger_from_offset_minutes(offset_minutes: int) -> str:
+    """RFC 5545 relative TRIGGER from subscription offset_minutes (neg = before start)."""
+    if offset_minutes == 0:
+        return "PT0S"
+    sign = "-" if offset_minutes < 0 else ""
+    abs_m = abs(offset_minutes)
+    if abs_m % 1440 == 0:
+        return f"{sign}P{abs_m // 1440}D"
+    if abs_m % 60 == 0:
+        return f"{sign}PT{abs_m // 60}H"
+    return f"{sign}PT{abs_m}M"
+
+
+def _valarm_lines(offset_minutes: int) -> list[str]:
+    return [
+        "BEGIN:VALARM",
+        "ACTION:DISPLAY",
+        "DESCRIPTION:MaintenanceHub reminder",
+        f"TRIGGER:{trigger_from_offset_minutes(offset_minutes)}",
+        "END:VALARM",
+    ]
+
+
+def alarm_offsets_for_user(
+    db: Session,
+    user_id: str,
+    events: Iterable[MaintenanceEvent],
+) -> dict[str, list[int]]:
+    """Map event id → sorted unique reminder offsets from the user's matching subscriptions.
+
+    Reuses notification effective-impact matching so ICS VALARM aligns with My Alerts
+    advance reminders for the same app/env pairs.
+    """
+    from maintenancehub_api.domain.notifications import matching_subscriptions
+
+    event_list = list(events)
+    if not event_list:
+        return {}
+    out: dict[str, list[int]] = {}
+    for event in event_list:
+        matched = matching_subscriptions(db, event)
+        offsets: set[int] = set()
+        for sub in matched:
+            if sub.user_id != user_id or not sub.is_active:
+                continue
+            for rem in sub.reminders or []:
+                offsets.add(int(rem.offset_minutes))
+        if offsets:
+            out[event.id] = sorted(offsets)
+    return out
+
+
 def build_ics(
     events: Iterable[MaintenanceEvent],
     *,
     calendar_name: str = "MaintenanceHub",
+    alarm_offsets_by_event: Mapping[str, Iterable[int]] | None = None,
+    alarm_offsets_minutes: Iterable[int] | None = None,
 ) -> str:
     """Build Outlook-compatible VCALENDAR.
 
     Recurring masters emit RRULE + EXDATE for cancels. Rescheduled occurrences emit a
     separate VEVENT with the same UID and RECURRENCE-ID = original occurrence start
     (stable logical identity).
+
+    When ``alarm_offsets_by_event`` (preferred) or ``alarm_offsets_minutes`` is set,
+    non-cancelled VEVENTs include DISPLAY VALARM blocks for those offsets.
     """
     lines = [
         "BEGIN:VCALENDAR",
@@ -252,6 +311,11 @@ def build_ics(
         "METHOD:PUBLISH",
         f"X-WR-CALNAME:{_escape(calendar_name)}",
     ]
+    default_alarms = sorted({int(m) for m in (alarm_offsets_minutes or [])})
+    per_event = {
+        eid: sorted({int(m) for m in offs})
+        for eid, offs in (alarm_offsets_by_event or {}).items()
+    }
     now = _fmt_dt(datetime.now(timezone.utc))
     for event in events:
         uid = series_uid(event.id)
@@ -283,6 +347,7 @@ def build_ics(
         if event.expected_impact:
             desc_parts.append(f"Impact: {event.expected_impact}")
         description = _escape("\n".join(p for p in desc_parts if p))
+        alarms = [] if is_cancelled else per_event.get(event.id, default_alarms)
 
         lines.extend(
             [
@@ -303,6 +368,8 @@ def build_ics(
             for ex in event.recurrence_rule.exceptions or []:
                 if ex.action == "cancel":
                     lines.append(f"EXDATE:{_fmt_dt(ex.original_starts_at)}")
+        for offset in alarms:
+            lines.extend(_valarm_lines(offset))
         lines.append("END:VEVENT")
 
         # Reschedule overrides — same UID, RECURRENCE-ID = original start
@@ -321,8 +388,11 @@ def build_ics(
                         f"SUMMARY:{_escape(title)}",
                         f"DESCRIPTION:{description}",
                         f"STATUS:{status}",
-                        "END:VEVENT",
                     ]
                 )
+                if not is_cancelled:
+                    for offset in alarms:
+                        lines.extend(_valarm_lines(offset))
+                lines.append("END:VEVENT")
     lines.append("END:VCALENDAR")
     return "\r\n".join(lines) + "\r\n"
